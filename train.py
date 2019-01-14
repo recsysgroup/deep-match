@@ -232,27 +232,27 @@ def main(_):
             #     'size': 1000000,
             #     'value_index': 0,
             # },
-            # {
-            #     'name': 'user_age',
-            #     'size': 100,
-            #     'value_index': 6,
-            #     'need_hash': True,
-            #     'type': 'one_hot'
-            # },
-            # {
-            #     'name': 'user_gender',
-            #     'size': 100,
-            #     'value_index': 7,
-            #     'need_hash': True,
-            #     'type': 'one_hot'
-            # },
-            # {
-            #     'name': 'user_purchase',
-            #     'size': 100,
-            #     'value_index': 8,
-            #     'need_hash': True,
-            #     'type': 'one_hot'  # one_hot,dense,
-            # },
+            {
+                'name': 'user_age',
+                'size': 100,
+                'value_index': 6,
+                'need_hash': True,
+                'type': 'one_hot'
+            },
+            {
+                'name': 'user_gender',
+                'size': 100,
+                'value_index': 7,
+                'need_hash': True,
+                'type': 'one_hot'
+            },
+            {
+                'name': 'user_purchase',
+                'size': 100,
+                'value_index': 8,
+                'need_hash': True,
+                'type': 'one_hot'  # one_hot,dense,
+            },
             {
                 'name': 'user_rootcates',
                 'size': 10000,
@@ -280,7 +280,7 @@ def main(_):
                 'value_index': 5,
                 'need_hash': True,
                 'type': 'one_hot'
-            }
+            },
         ],
     }
 
