@@ -1,6 +1,7 @@
 import tensorflow as tf
 import argparse
 import sys
+import numpy as np
 
 flags = tf.flags
 
@@ -31,12 +32,42 @@ flags.DEFINE_string("input_emb_len", None, "")
 flags.DEFINE_string("output_emb_len", None, "")
 
 
+def parse_seq_str_op(text, max_seq_len):
+    def user_func(text):
+        ids = []
+        mask = []
+        parts = text.split(',')
+        for i in range(min(len(parts), max_seq_len)):
+            ids.append(parts[i])
+            mask.append(1.0)
+
+        ids = ids + [''] * (max_seq_len - len(ids))
+        mask = mask + [0.0] * (max_seq_len - len(mask))
+
+        return ids, mask
+
+    y = tf.py_func(user_func, [text], [tf.string, tf.double])
+    y[0].set_shape((max_seq_len))
+    y[1].set_shape((max_seq_len))
+    return y
+
+
 def input_fn_builder(table, config):
     def _decode_record(*line):
         ret_dict = {}
 
-        for fea in config.get('user') + config.get('content'):
-            ret_dict[fea.get('name')] = line[fea.get('col_index')]
+        for fea in config.get('user') + config.get('item'):
+            fea_name = fea.get('name')
+            fea_type = fea.get('type')
+            value_index = fea.get('value_index')
+
+            if fea_type == 'one_hot':
+                ret_dict[fea_name] = line[value_index]
+
+            if fea_type == 'seq':
+                value_and_mask = parse_seq_str_op(line[value_index], fea.get('seq_len'))
+                ret_dict[fea_name] = value_and_mask[0]
+                ret_dict[fea_name + '_mask'] = value_and_mask[1]
 
         ret_dict['label'] = line[2]
 
@@ -46,6 +77,7 @@ def input_fn_builder(table, config):
                         , ''
                         , 0
                         , 0
+                        , ''
                         , ''
                         , ''
                         , ''
@@ -69,42 +101,66 @@ def input_fn_builder(table, config):
     return input_fn
 
 
+class MatchNet(object):
+    def __init__(self, config):
+        self.config = config
+
+        embedding_dim = 64
+
+        embedding_dict = {}
+        for fea in config.get('user') + config.get('item'):
+            fea_name = fea.get('name')
+            fea_size = fea.get('size')
+            fea_type = fea.get('type')
+            if fea_type in ('one_hot', 'seq'):
+                embedding_dict[fea.get('name')] = tf.get_variable(
+                    fea_name + '_embedding',
+                    [fea_size, embedding_dim],
+                    initializer=tf.truncated_normal_initializer(stddev=0.01))
+
+        self.embedding_dict = embedding_dict
+
+    def _emb_sum(self, name, features):
+        emb_sum = None
+        for fea in self.config.get(name):
+            fea_name = fea.get('name')
+            fea_size = fea.get('size')
+            fea_type = fea.get('type')
+
+            emb = None
+            if fea_type == 'one_hot':
+                hash = tf.string_to_hash_bucket_fast(features.get(fea_name), fea_size, name=fea_name + '_hash')
+                emb = tf.nn.embedding_lookup(self.embedding_dict.get(fea_name), hash)
+
+            if fea_type == 'seq':
+                hash = tf.string_to_hash_bucket_fast(features.get(fea_name), fea_size, name=fea_name + '_hash')
+                mask = tf.expand_dims(tf.cast(features.get(fea_name + '_mask'), dtype=tf.float32), axis=-1)
+                emb = tf.nn.embedding_lookup(self.embedding_dict.get(fea_name), hash) * mask
+                emb = tf.reduce_sum(emb, axis=1) / (tf.reduce_sum(mask, axis=1) + 1e-6)
+
+            if emb_sum is None:
+                emb_sum = emb
+            else:
+                emb_sum = emb_sum + emb
+
+        return emb_sum
+
+    def user_embedding(self, features):
+        return self._emb_sum('user', features)
+
+    def item_embedding(self, features):
+        return self._emb_sum('item', features)
+
+
 def model_fn_builder(config):
     def model_fn(features, labels, mode, params):  # pylint: disable=unused-argument
 
         labels = features['label']
 
-        embedding_dim = 64
+        matchNet = MatchNet(config)
 
-        hash_dict = {}
-        embedding_dict = {}
-        for fea in config.get('user') + config.get('content'):
-            fea_name = fea.get('name')
-            fea_size = fea.get('size')
-
-            hash_dict[fea.get('name')] = tf.string_to_hash_bucket_fast(
-                features.get(fea_name),
-                fea_size)
-
-            embedding_dict[fea.get('name')] = tf.get_variable(
-                fea_name + '_embedding',
-                [fea_size, embedding_dim],
-                initializer=tf.truncated_normal_initializer(stddev=0.01))
-
-        def _emb_sum(name):
-            emb_sum = None
-            for fea in config.get(name):
-                fea_name = fea.get('name')
-                emb = tf.nn.embedding_lookup(embedding_dict.get(fea_name), hash_dict.get(fea_name))
-                if emb_sum is None:
-                    emb_sum = emb
-                else:
-                    emb_sum = emb_sum + emb
-
-            return emb_sum
-
-        user_emb = _emb_sum('user')
-        content_emb = _emb_sum('content')
+        user_emb = matchNet.user_embedding(features)
+        content_emb = matchNet.item_embedding(features)
 
         predictions = tf.reduce_sum(user_emb * content_emb, axis=1)
 
@@ -163,43 +219,67 @@ def test_input_fn(_input_fn):
 
 def main(_):
     print(FLAGS.task_index, FLAGS.job_name, FLAGS.worker_count)
-    FLAGS.worker_count -= 1
+    if FLAGS.worker_count > 1:
+        FLAGS.worker_count -= 1
     if FLAGS.task_index > 0:
         FLAGS.task_index -= 1
 
     config = {
+        'embedding_size': 64,  # user and item final dim size
         'user': [
             # {
             #     'name': 'user_id',
             #     'size': 1000000,
-            #     'col_index': 0,
+            #     'value_index': 0,
+            # },
+            # {
+            #     'name': 'user_age',
+            #     'size': 100,
+            #     'value_index': 6,
+            #     'need_hash': True,
+            #     'type': 'one_hot'
+            # },
+            # {
+            #     'name': 'user_gender',
+            #     'size': 100,
+            #     'value_index': 7,
+            #     'need_hash': True,
+            #     'type': 'one_hot'
+            # },
+            # {
+            #     'name': 'user_purchase',
+            #     'size': 100,
+            #     'value_index': 8,
+            #     'need_hash': True,
+            #     'type': 'one_hot'  # one_hot,dense,
             # },
             {
-                'name': 'user_age',
-                'size': 100,
-                'col_index': 6,
-            },
-            {
-                'name': 'user_gender',
-                'size': 100,
-                'col_index': 7,
-            },
-            {
-                'name': 'user_purchase',
-                'size': 100,
-                'col_index': 8,
+                'name': 'user_rootcates',
+                'size': 10000,
+                'need_hash': True,
+                'value_index': 9,
+                'type': 'seq',
+                'seq_len': 5,  # if type=seq, need this param
+                # 'weight_index': 444,  # if equal weights, this param could be None
+                # 'time_index': 555,  # if it has time embedding,the value should be int type
+                'reduce_method': 'mean',  # mean,sum,mlp,attention,rnn,cnn
+                # 'layer_size': 2 #mlp,attention need this param
             }
         ],
-        'content': [
+        'item': [
             {
                 'name': 'content_id',
                 'size': 1000000,
-                'col_index': 1,
+                'value_index': 1,
+                'need_hash': True,
+                'type': 'one_hot'
             },
             {
                 'name': 'cate_id',
                 'size': 100000,
-                'col_index': 5,
+                'value_index': 5,
+                'need_hash': True,
+                'type': 'one_hot'
             }
         ],
     }
@@ -212,6 +292,8 @@ def main(_):
 
     config = tf.ConfigProto(allow_soft_placement=True)
     distribution = tf.contrib.distribute.ParameterServerStrategy(num_gpus_per_worker=1)
+    # distribution = tf.contrib.distribute.MirroredStrategy(num_gpus=4)
+
     run_config = tf.estimator.RunConfig(
         model_dir=FLAGS.model_dir,
         session_config=config,

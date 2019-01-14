@@ -13,6 +13,6 @@ pai -name tensorflow140
 -DentryFile="deep-match/train.py"
 -Dbuckets="oss://jiusheng-tmp/?host='${OSS_HOST}'&role_arn='${ROLE_ARN}'"
 -Dtables="'${TRAIN_TABLE}','${EVAL_TABLE}'"
--Dcluster="{\"ps\":{\"count\":1},\"worker\":{\"count\":2}}"
--DuserDefinedParameters="--train_max_step=500000 --learning_rate=1e-2 --train_table='${TRAIN_TABLE}' --eval_table='${EVAL_TABLE}' --model_dir=oss://jiusheng-tmp/fm_model --tmp_dir=oss://jiusheng-tmp/fm_tmp --batch_size=128"
+-Dcluster="{\"ps\":{\"count\":1},\"worker\":{\"count\":4}}"
+-DuserDefinedParameters="--train_max_step=1000000 --learning_rate=1e-2 --train_table='${TRAIN_TABLE}' --eval_table='${EVAL_TABLE}' --model_dir=oss://jiusheng-tmp/fm_model_v2 --tmp_dir=oss://jiusheng-tmp/fm_tmp --train_batch_size=128"
 '
