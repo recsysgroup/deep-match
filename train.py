@@ -30,6 +30,8 @@ flags.DEFINE_float("learning_rate", 1e-4, "")
 # task
 flags.DEFINE_string("input_emb_len", None, "")
 flags.DEFINE_string("output_emb_len", None, "")
+flags.DEFINE_string("train_match_table", None, "")
+flags.DEFINE_string("eval_match_table", None, "")
 
 
 def parse_seq_str_op(text, max_seq_len):
@@ -52,7 +54,7 @@ def parse_seq_str_op(text, max_seq_len):
     return y
 
 
-def input_fn_builder(table, config):
+def input_fn_builder(match_table, table, config):
     def _decode_record(*line):
         ret_dict = {}
 
@@ -96,7 +98,16 @@ def input_fn_builder(table, config):
         d = d.map(_decode_record)
         d = d.batch(batch_size=FLAGS.train_batch_size)
 
-        return d
+        match_dataset = tf.data.TableRecordDataset([match_table],
+                                                   record_defaults=_recode_defaults,
+                                                   slice_id=FLAGS.task_index,
+                                                   slice_count=FLAGS.worker_count)
+        match_dataset = match_dataset.repeat()
+        match_dataset = match_dataset.shuffle(buffer_size=10000)
+        match_dataset = match_dataset.map(_decode_record)
+        match_dataset = match_dataset.batch(batch_size=FLAGS.train_batch_size)
+
+        return tf.data.Dataset.zip({'match_features': match_dataset, 'rank_features': d})
 
     return input_fn
 
@@ -155,16 +166,44 @@ class MatchNet(object):
 def model_fn_builder(config):
     def model_fn(features, labels, mode, params):  # pylint: disable=unused-argument
 
-        labels = features['label']
+        # rank loss
+        rank_features = features.get('rank_features')
+
+        labels = rank_features['label']
 
         matchNet = MatchNet(config)
 
-        user_emb = matchNet.user_embedding(features)
-        content_emb = matchNet.item_embedding(features)
+        user_emb = matchNet.user_embedding(rank_features)
+        content_emb = matchNet.item_embedding(rank_features)
 
         predictions = tf.reduce_sum(user_emb * content_emb, axis=1)
+        rank_loss = tf.losses.sigmoid_cross_entropy(labels, predictions)
 
-        loss = tf.losses.sigmoid_cross_entropy(labels, predictions)
+        # match loss
+
+        match_features = features.get('match_features')
+
+        user_emb_for_match = matchNet.user_embedding(match_features)
+        content_emb_for_match = matchNet.item_embedding(match_features)
+
+        neg_size = config.get('neg_sample_size')
+
+        tmp_emb = tf.tile(content_emb_for_match, [1, 1])
+        for i in range(neg_size):
+            rand = int((1 + i) * FLAGS.train_batch_size / (neg_size + 1))
+            content_emb_for_match = tf.concat([content_emb_for_match,
+                                               tf.slice(tmp_emb, [rand, 0], [FLAGS.train_batch_size - rand, -1]),
+                                               tf.slice(tmp_emb, [0, 0], [rand, -1])], 0)
+
+        point_multi = tf.reduce_sum(tf.tile(user_emb_for_match, [neg_size + 1, 1]) * content_emb_for_match, 1,
+                                    True)
+        dis = tf.transpose(tf.reshape(tf.transpose(point_multi), [neg_size + 1, FLAGS.train_batch_size]))
+
+        prob = tf.nn.softmax(dis)
+        match_loss = -tf.reduce_sum(tf.log(tf.slice(prob, [0, 0], [-1, 1]))) / FLAGS.train_batch_size
+
+        # multi loss
+        loss = match_loss + rank_loss
         # loss += 0.1 * tf.reduce_mean(tf.reduce_sum(tf.square(user_emb), axis=1))
         # loss += 0.1 * tf.reduce_mean(tf.reduce_sum(tf.square(content_emb), axis=1))
 
@@ -196,7 +235,10 @@ def model_fn_builder(config):
                 loss=loss,
                 eval_metric_ops={
                     "eval_loss": tf.metrics.mean(loss),
-                    "auc": tf.metrics.auc(labels, tf.sigmoid(predictions))
+                    'rank_loss': tf.metrics.mean(rank_loss),
+                    'match_loss': tf.metrics.mean(match_loss),
+                    "auc": tf.metrics.auc(labels, tf.sigmoid(predictions)),
+                    'mrr': tf.metrics.mean(metric_mrr(prob, neg_size))
                 }
             )
 
@@ -207,6 +249,13 @@ def model_fn_builder(config):
         return output_spec
 
     return model_fn
+
+
+def metric_mrr(predicts, neg_size):
+    _, ranks = tf.nn.top_k(predicts, neg_size + 1)
+    true_rank = tf.slice(tf.where(tf.equal(ranks, 0)), [0, 1], [FLAGS.train_batch_size, 1])
+    mrr = tf.reduce_mean(1.0 / tf.to_float(true_rank + 1))
+    return mrr
 
 
 def test_input_fn(_input_fn):
@@ -226,6 +275,7 @@ def main(_):
 
     config = {
         'embedding_size': 64,  # user and item final dim size
+        'neg_sample_size': 5,
         'user': [
             # {
             #     'name': 'user_id',
@@ -284,8 +334,8 @@ def main(_):
         ],
     }
 
-    train_input_fn = input_fn_builder(FLAGS.train_table, config)
-    eval_input_fn = input_fn_builder(FLAGS.eval_table, config)
+    train_input_fn = input_fn_builder(FLAGS.train_match_table, FLAGS.train_table, config)
+    eval_input_fn = input_fn_builder(FLAGS.eval_match_table, FLAGS.eval_table, config)
     # predict_input_fn = input_fn_builder()
 
     model_fn = model_fn_builder(config)
@@ -316,7 +366,7 @@ def main(_):
     if FLAGS.do_train:
         print('do_train')
         train_spec = tf.estimator.TrainSpec(input_fn=train_input_fn, max_steps=FLAGS.train_max_step)
-        eval_spec = tf.estimator.EvalSpec(input_fn=eval_input_fn, throttle_secs=300)
+        eval_spec = tf.estimator.EvalSpec(input_fn=eval_input_fn, throttle_secs=60)
         tf.estimator.train_and_evaluate(estimator, train_spec, eval_spec)
 
 
