@@ -16,5 +16,5 @@ pai -name tensorflow140
 -Dbuckets="oss://jiusheng-tmp/?host='${OSS_HOST}'&role_arn='${ROLE_ARN}'"
 -Dtables="'${TRAIN_TABLE}','${EVAL_TABLE}','${TRAIN_MATCH_TABLE}','${EVAL_MATCH_TABLE}'"
 -Dcluster="{\"ps\":{\"count\":1},\"worker\":{\"count\":4}}"
--DuserDefinedParameters="--train_max_step=500000 --learning_rate=1e-3 --train_table='${TRAIN_TABLE}' --eval_table='${TRAIN_TABLE}' --train_match_table='${TRAIN_MATCH_TABLE}' --eval_match_table='${TRAIN_MATCH_TABLE}' --model_dir=oss://jiusheng-tmp/fm_model_v2 --tmp_dir=oss://jiusheng-tmp/fm_tmp --train_batch_size=128"
+-DuserDefinedParameters="--train_max_step=100000 --learning_rate=1e-3 --train_table='${TRAIN_TABLE}' --eval_table='${TRAIN_TABLE}' --train_match_table='${TRAIN_MATCH_TABLE}' --eval_match_table='${TRAIN_MATCH_TABLE}' --model_dir=oss://jiusheng-tmp/fm_model --tmp_dir=oss://jiusheng-tmp/fm_tmp --train_batch_size=128"
 '

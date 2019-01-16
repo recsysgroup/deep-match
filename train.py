@@ -55,59 +55,64 @@ def parse_seq_str_op(text, max_seq_len):
 
 
 def input_fn_builder(match_table, table, config):
+    record_defaults = []
+    selected_cols = []
+    colname_2_index = {}
+    for fea in config.get('user') + config.get('item'):
+        record_defaults.append('')
+        selected_cols.append(fea.get('name'))
+        colname_2_index[fea.get('name')] = len(colname_2_index)
+
+    selected_cols.append('label')
+    record_defaults.append(0)
+    colname_2_index['label'] = len(colname_2_index)
+
+    print record_defaults
+    print ','.join(selected_cols)
+    print colname_2_index
+
     def _decode_record(*line):
         ret_dict = {}
 
         for fea in config.get('user') + config.get('item'):
             fea_name = fea.get('name')
             fea_type = fea.get('type')
-            value_index = fea.get('value_index')
 
             if fea_type == 'one_hot':
-                ret_dict[fea_name] = line[value_index]
+                ret_dict[fea_name] = line[colname_2_index.get(fea_name)]
 
             if fea_type == 'seq':
-                value_and_mask = parse_seq_str_op(line[value_index], fea.get('seq_len'))
+                value_and_mask = parse_seq_str_op(line[colname_2_index.get(fea_name)], fea.get('seq_len'))
                 ret_dict[fea_name] = value_and_mask[0]
                 ret_dict[fea_name + '_mask'] = value_and_mask[1]
 
-        ret_dict['label'] = line[2]
+        ret_dict['label'] = line[colname_2_index.get('label')]
 
         return ret_dict
 
-    _recode_defaults = (''
-                        , ''
-                        , 0
-                        , 0
-                        , ''
-                        , ''
-                        , ''
-                        , ''
-                        , ''
-                        , ''
-                        )
-
     def input_fn():
-        d = tf.data.TableRecordDataset([table],
-                                       record_defaults=_recode_defaults,
-                                       slice_id=FLAGS.task_index,
-                                       slice_count=FLAGS.worker_count)
+        rank_dataset = tf.data.TableRecordDataset([table],
+                                                  record_defaults=record_defaults,
+                                                  slice_id=FLAGS.task_index,
+                                                  slice_count=FLAGS.worker_count,
+                                                  selected_cols=','.join(selected_cols))
 
-        d = d.repeat()
-        d = d.shuffle(buffer_size=1000)
-        d = d.map(_decode_record)
-        d = d.batch(batch_size=FLAGS.train_batch_size)
+        rank_dataset = rank_dataset.repeat()
+        rank_dataset = rank_dataset.shuffle(buffer_size=1000)
+        rank_dataset = rank_dataset.map(_decode_record)
+        rank_dataset = rank_dataset.batch(batch_size=FLAGS.train_batch_size)
 
         match_dataset = tf.data.TableRecordDataset([match_table],
-                                                   record_defaults=_recode_defaults,
+                                                   record_defaults=record_defaults,
                                                    slice_id=FLAGS.task_index,
-                                                   slice_count=FLAGS.worker_count)
+                                                   slice_count=FLAGS.worker_count,
+                                                   selected_cols=','.join(selected_cols))
         match_dataset = match_dataset.repeat()
         match_dataset = match_dataset.shuffle(buffer_size=10000)
         match_dataset = match_dataset.map(_decode_record)
         match_dataset = match_dataset.batch(batch_size=FLAGS.train_batch_size)
 
-        return tf.data.Dataset.zip({'match_features': match_dataset, 'rank_features': d})
+        return tf.data.Dataset.zip({'match_features': match_dataset, 'rank_features': rank_dataset})
 
     return input_fn
 
@@ -164,23 +169,7 @@ class MatchNet(object):
 
 
 def model_fn_builder(config):
-    def model_fn(features, labels, mode, params):  # pylint: disable=unused-argument
-
-        # rank loss
-        rank_features = features.get('rank_features')
-
-        labels = rank_features['label']
-
-        matchNet = MatchNet(config)
-
-        user_emb = matchNet.user_embedding(rank_features)
-        content_emb = matchNet.item_embedding(rank_features)
-
-        predictions = tf.reduce_sum(user_emb * content_emb, axis=1)
-        rank_loss = tf.losses.sigmoid_cross_entropy(labels, predictions)
-
-        # match loss
-
+    def _match_loss_and_metric(matchNet, config, features):
         match_features = features.get('match_features')
 
         user_emb_for_match = matchNet.user_embedding(match_features)
@@ -202,15 +191,33 @@ def model_fn_builder(config):
         prob = tf.nn.softmax(dis)
         match_loss = -tf.reduce_sum(tf.log(tf.slice(prob, [0, 0], [-1, 1]))) / FLAGS.train_batch_size
 
-        # multi loss
-        loss = match_loss + rank_loss
-        # loss += 0.1 * tf.reduce_mean(tf.reduce_sum(tf.square(user_emb), axis=1))
-        # loss += 0.1 * tf.reduce_mean(tf.reduce_sum(tf.square(content_emb), axis=1))
+        return match_loss, tf.metrics.mean(metric_mrr(prob, neg_size))
+
+    def _rank_loss_and_metric(matchNet, config, features):
+        rank_features = features.get('rank_features')
+
+        labels = rank_features['label']
+
+        user_emb = matchNet.user_embedding(rank_features)
+        content_emb = matchNet.item_embedding(rank_features)
+
+        predictions = tf.reduce_sum(user_emb * content_emb, axis=1)
+        rank_loss = tf.losses.sigmoid_cross_entropy(labels, predictions)
+
+        return rank_loss, tf.metrics.auc(labels, tf.sigmoid(predictions))
+
+    def model_fn(features, labels, mode, params):  # pylint: disable=unused-argument
+
+        matchNet = MatchNet(config)
 
         if mode == tf.estimator.ModeKeys.TRAIN:
+            rank_loss, auc_metric = _rank_loss_and_metric(matchNet, config, features)
+            match_loss, mrr_metric = _rank_loss_and_metric(matchNet, config, features)
+            loss = match_loss + rank_loss
+            # loss += 0.1 * tf.reduce_mean(tf.reduce_sum(tf.square(user_emb), axis=1))
+            # loss += 0.1 * tf.reduce_mean(tf.reduce_sum(tf.square(content_emb), axis=1))
 
             global_step = tf.train.get_or_create_global_step()
-
             learning_rate = tf.constant(value=params["learning_rate"], shape=[], dtype=tf.float32)
 
             # Implements linear decay of the learning rate.
@@ -230,6 +237,9 @@ def model_fn_builder(config):
                 train_op=train_op)
 
         elif mode == tf.estimator.ModeKeys.EVAL:
+            rank_loss, auc_metric = _rank_loss_and_metric(matchNet, config, features)
+            match_loss, mrr_metric = _rank_loss_and_metric(matchNet, config, features)
+            loss = match_loss + rank_loss
             output_spec = tf.estimator.EstimatorSpec(
                 mode=mode,
                 loss=loss,
@@ -237,8 +247,8 @@ def model_fn_builder(config):
                     "eval_loss": tf.metrics.mean(loss),
                     'rank_loss': tf.metrics.mean(rank_loss),
                     'match_loss': tf.metrics.mean(match_loss),
-                    "auc": tf.metrics.auc(labels, tf.sigmoid(predictions)),
-                    'mrr': tf.metrics.mean(metric_mrr(prob, neg_size))
+                    "auc": auc_metric,
+                    'mrr': mrr_metric
                 }
             )
 
@@ -283,23 +293,20 @@ def main(_):
             #     'value_index': 0,
             # },
             {
-                'name': 'user_age',
+                'name': 'age',
                 'size': 100,
-                'value_index': 6,
                 'need_hash': True,
                 'type': 'one_hot'
             },
             {
-                'name': 'user_gender',
+                'name': 'gender',
                 'size': 100,
-                'value_index': 7,
                 'need_hash': True,
                 'type': 'one_hot'
             },
             {
-                'name': 'user_purchase',
+                'name': 'purchase_total',
                 'size': 100,
-                'value_index': 8,
                 'need_hash': True,
                 'type': 'one_hot'  # one_hot,dense,
             },
@@ -307,7 +314,6 @@ def main(_):
                 'name': 'user_rootcates',
                 'size': 10000,
                 'need_hash': True,
-                'value_index': 9,
                 'type': 'seq',
                 'seq_len': 5,  # if type=seq, need this param
                 # 'weight_index': 444,  # if equal weights, this param could be None
@@ -320,14 +326,12 @@ def main(_):
             {
                 'name': 'content_id',
                 'size': 1000000,
-                'value_index': 1,
                 'need_hash': True,
                 'type': 'one_hot'
             },
             {
                 'name': 'cate_id',
                 'size': 100000,
-                'value_index': 5,
                 'need_hash': True,
                 'type': 'one_hot'
             },
