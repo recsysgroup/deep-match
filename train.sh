@@ -12,7 +12,7 @@ tar -czf /tmp/deep-match.tar.gz ../deep-match
 odpscmd -e 'use etao_backend;
 pai -name tensorflow140
 -Dscript="file:///tmp/deep-match.tar.gz"
--DentryFile="deep-match/train.py"
+-DentryFile="deep-match/main.py"
 -Dbuckets="oss://jiusheng-tmp/?host='${OSS_HOST}'&role_arn='${ROLE_ARN}'"
 -Dtables="'${TRAIN_TABLE}','${EVAL_TABLE}','${TRAIN_MATCH_TABLE}','${EVAL_MATCH_TABLE}'"
 -Dcluster="{\"ps\":{\"count\":1},\"worker\":{\"count\":4}}"

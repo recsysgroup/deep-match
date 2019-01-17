@@ -1,0 +1,46 @@
+{
+  'embedding_size': 64,
+  'neg_sample_size': 5,
+  'user': [
+    {
+      'name': 'age',
+      'size': 100,
+      'need_hash': True,
+      'type': 'one_hot'
+    },
+    {
+      'name': 'gender',
+      'size': 100,
+      'need_hash': True,
+      'type': 'one_hot'
+    },
+    {
+      'name': 'purchase_total',
+      'size': 100,
+      'need_hash': True,
+      'type': 'one_hot'
+    },
+    {
+      'name': 'user_rootcates',
+      'size': 10000,
+      'need_hash': True,
+      'type': 'seq',
+      'seq_len': 5,
+      'reduce_method': 'mean'
+    }
+  ],
+  'item': [
+    {
+      'name': 'content_id',
+      'size': 1000000,
+      'need_hash': True,
+      'type': 'one_hot'
+    },
+    {
+      'name': 'cate_id',
+      'size': 100000,
+      'need_hash': True,
+      'type': 'one_hot'
+    }
+  ]
+}

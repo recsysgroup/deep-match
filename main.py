@@ -2,6 +2,7 @@ import tensorflow as tf
 import argparse
 import sys
 import numpy as np
+import constant as C
 
 flags = tf.flags
 
@@ -22,6 +23,7 @@ flags.DEFINE_string("output_table", None, "")
 flags.DEFINE_string("tmp_dir", None, "")
 flags.DEFINE_string("model_dir", None, "")
 flags.DEFINE_integer("train_batch_size", 128, "")
+flags.DEFINE_integer("predict_batch_size", 1000, "")
 flags.DEFINE_integer("train_max_step", 1000, "")
 flags.DEFINE_boolean("do_train", True, "")
 flags.DEFINE_boolean("do_predict", False, "")
@@ -32,6 +34,7 @@ flags.DEFINE_string("input_emb_len", None, "")
 flags.DEFINE_string("output_emb_len", None, "")
 flags.DEFINE_string("train_match_table", None, "")
 flags.DEFINE_string("eval_match_table", None, "")
+flags.DEFINE_string("task_type", None, "train,user_embedding,item_embedding,predict")
 
 
 def parse_seq_str_op(text, max_seq_len):
@@ -54,7 +57,62 @@ def parse_seq_str_op(text, max_seq_len):
     return y
 
 
-def input_fn_builder(match_table, table, config):
+def predict_input_fn_builder(table, config):
+    feas = []
+    if FLAGS.task_type == C.TASK_TYPE_USER_EMBEDDING:
+        feas = config.get('user')
+    elif FLAGS.task_type == C.TASK_TYPE_ITEM_EMBEDDING:
+        feas = config.get('item')
+
+    record_defaults = []
+    selected_cols = []
+    colname_2_index = {}
+    for fea in feas:
+        record_defaults.append('')
+        selected_cols.append(fea.get('name'))
+        colname_2_index[fea.get('name')] = len(colname_2_index)
+
+    selected_cols.append('key')
+    record_defaults.append('')
+    colname_2_index['key'] = len(colname_2_index)
+
+    def _decode_record(*line):
+        ret_dict = {}
+
+        for fea in feas:
+            fea_name = fea.get('name')
+            fea_type = fea.get('type')
+
+            if fea_type == 'one_hot':
+                ret_dict[fea_name] = line[colname_2_index.get(fea_name)]
+
+            if fea_type == 'seq':
+                value_and_mask = parse_seq_str_op(line[colname_2_index.get(fea_name)], fea.get('seq_len'))
+                ret_dict[fea_name] = value_and_mask[0]
+                ret_dict[fea_name + '_mask'] = value_and_mask[1]
+
+        ret_dict['key'] = line[colname_2_index.get('key')]
+
+        return ret_dict
+
+    def input_fn():
+        d = tf.data.TableRecordDataset([table],
+                                       record_defaults=record_defaults,
+                                       slice_id=FLAGS.task_index,
+                                       slice_count=FLAGS.worker_count,
+                                       selected_cols=','.join(selected_cols))
+
+        d = d.repeat(1)
+        d = d.map(_decode_record)
+        d = d.batch(batch_size=FLAGS.predict_batch_size)
+        iterator = d.make_one_shot_iterator()
+        one_element = iterator.get_next()
+        return one_element
+
+    return input_fn
+
+
+def input_fn_builder(match_table, table, config, mode):
     record_defaults = []
     selected_cols = []
     colname_2_index = {}
@@ -66,10 +124,6 @@ def input_fn_builder(match_table, table, config):
     selected_cols.append('label')
     record_defaults.append(0)
     colname_2_index['label'] = len(colname_2_index)
-
-    print record_defaults
-    print ','.join(selected_cols)
-    print colname_2_index
 
     def _decode_record(*line):
         ret_dict = {}
@@ -253,7 +307,20 @@ def model_fn_builder(config):
             )
 
         else:
-            predictions = None
+            predictions = {}
+            predictions['key'] = features.get('key')
+            predict_type = FLAGS.task_type
+            if predict_type == C.TASK_TYPE_USER_EMBEDDING:
+                user_embedding = matchNet.user_embedding(features)
+                user_embedding = tf.reduce_join(tf.as_string(user_embedding, precision=5), 1, separator=',')
+                predictions['user_embedding'] = user_embedding
+            elif predict_type == C.TASK_TYPE_ITEM_EMBEDDING:
+                item_embedding = matchNet.item_embedding(features)
+                item_embedding = tf.reduce_join(tf.as_string(item_embedding, precision=5), 1, separator=',')
+                predictions['item_embedding'] = item_embedding
+            elif predict_type == C.TASK_TYPE_PREDICT:
+                pass
+
             output_spec = tf.estimator.EstimatorSpec(
                 mode=mode, predictions=predictions)
         return output_spec
@@ -277,12 +344,6 @@ def test_input_fn(_input_fn):
 
 
 def main(_):
-    print(FLAGS.task_index, FLAGS.job_name, FLAGS.worker_count)
-    if FLAGS.worker_count > 1:
-        FLAGS.worker_count -= 1
-    if FLAGS.task_index > 0:
-        FLAGS.task_index -= 1
-
     config = {
         'embedding_size': 64,  # user and item final dim size
         'neg_sample_size': 5,
@@ -338,26 +399,25 @@ def main(_):
         ],
     }
 
-    train_input_fn = input_fn_builder(FLAGS.train_match_table, FLAGS.train_table, config)
-    eval_input_fn = input_fn_builder(FLAGS.eval_match_table, FLAGS.eval_table, config)
     # predict_input_fn = input_fn_builder()
 
     model_fn = model_fn_builder(config)
 
-    config = tf.ConfigProto(allow_soft_placement=True)
+
+    session_config = tf.ConfigProto(allow_soft_placement=True)
     distribution = tf.contrib.distribute.ParameterServerStrategy(num_gpus_per_worker=1)
     # distribution = tf.contrib.distribute.MirroredStrategy(num_gpus=4)
 
     run_config = tf.estimator.RunConfig(
         model_dir=FLAGS.model_dir,
-        session_config=config,
-        distribute=distribution,
+        session_config=session_config,
+        # distribute=distribution,
         save_checkpoints_steps=50000,
     )
 
     params = {
         "learning_rate": FLAGS.learning_rate,
-        "batch_size": FLAGS.train_batch_size
+        "batch_size": FLAGS.train_batch_size,
     }
 
     estimator = tf.estimator.Estimator(
@@ -367,11 +427,30 @@ def main(_):
         config=run_config
     )
 
-    if FLAGS.do_train:
-        print('do_train')
+    if FLAGS.task_type == C.TASK_TYPE_TRAIN:
+        print(FLAGS.task_index, FLAGS.job_name, FLAGS.worker_count)
+        if FLAGS.worker_count > 1:
+            FLAGS.worker_count -= 1
+        if FLAGS.task_index > 0:
+            FLAGS.task_index -= 1
+        train_input_fn = input_fn_builder(FLAGS.train_match_table, FLAGS.train_table, config)
+        eval_input_fn = input_fn_builder(FLAGS.eval_match_table, FLAGS.eval_table, config)
         train_spec = tf.estimator.TrainSpec(input_fn=train_input_fn, max_steps=FLAGS.train_max_step)
         eval_spec = tf.estimator.EvalSpec(input_fn=eval_input_fn, throttle_secs=60)
         tf.estimator.train_and_evaluate(estimator, train_spec, eval_spec)
+
+    if FLAGS.task_type in (C.TASK_TYPE_USER_EMBEDDING, C.TASK_TYPE_ITEM_EMBEDDING):
+        predict_input_fn = predict_input_fn_builder(FLAGS.input_table, config)
+
+        writer = tf.python_io.TableWriter(FLAGS.output_table, slice_id=FLAGS.task_index)
+
+        for result in estimator.predict(input_fn=predict_input_fn):
+            if FLAGS.task_type == C.TASK_TYPE_USER_EMBEDDING:
+                writer.write([result.get('key'), result.get('user_embedding')], [0, 1])
+            elif FLAGS.task_type == C.TASK_TYPE_ITEM_EMBEDDING:
+                writer.write([result.get('key'), result.get('item_embedding')], [0, 1])
+
+        writer.close()
 
 
 if __name__ == "__main__":
