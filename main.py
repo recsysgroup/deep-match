@@ -4,6 +4,7 @@ import sys
 import numpy as np
 import constant as C
 from modeling import MatchNet
+from helper import LogviewMetricHook, LogviewMetricWriter
 
 flags = tf.flags
 
@@ -38,6 +39,8 @@ flags.DEFINE_string("eval_match_table", None, "")
 flags.DEFINE_string("train_neg_table", None, "")
 flags.DEFINE_string("eval_neg_table", None, "")
 flags.DEFINE_string("task_type", None, "train,user_embedding,item_embedding,predict")
+
+logviewMetricWriter = LogviewMetricWriter()
 
 
 def parse_seq_str_op(text, max_seq_len):
@@ -105,7 +108,8 @@ def table_dataset_and_decode_builder(table, config, extra_fields=[],
                                    record_defaults=record_defaults,
                                    slice_id=slice_id,
                                    slice_count=slice_count,
-                                   selected_cols=','.join(selected_cols))
+                                   selected_cols=','.join(selected_cols),
+                                   )
 
     return d, _decode_record
 
@@ -268,9 +272,10 @@ def model_fn_builder(config):
         matchNet = MatchNet(config)
 
         if mode == tf.estimator.ModeKeys.TRAIN:
-            # rank_loss, auc_metric = _rank_loss_and_metric(matchNet, config, features)
-            match_loss, mrr_metric = _match_loss_and_metric(matchNet, config, features)
-            loss = match_loss
+            rank_loss, auc_metric = _rank_loss_and_metric(matchNet, config, features)
+            match_loss, mrr_metric = _match_loss_and_metric_v3(matchNet, config, features)
+            alpha = 0.2
+            loss = rank_loss * alpha + match_loss * (1.0 - alpha)
             # loss += 0.1 * tf.reduce_mean(tf.reduce_sum(tf.square(user_emb), axis=1))
             # loss += 0.1 * tf.reduce_mean(tf.reduce_sum(tf.square(content_emb), axis=1))
 
@@ -288,10 +293,13 @@ def model_fn_builder(config):
 
             opt = tf.train.AdamOptimizer(learning_rate)
             train_op = opt.minimize(loss, global_step=tf.train.get_global_step())
+            hook = tf.train.ProfilerHook(save_steps=1000, output_dir=FLAGS.tmp_dir)
             output_spec = tf.estimator.EstimatorSpec(
                 mode=mode,
                 loss=loss,
-                train_op=train_op)
+                train_op=train_op,
+                training_chief_hooks=[hook]
+            )
 
         elif mode == tf.estimator.ModeKeys.EVAL:
             rank_loss, auc_metric = _rank_loss_and_metric(matchNet, config, features)
@@ -306,22 +314,28 @@ def model_fn_builder(config):
 
             unique_user_id, unique_user_embedding = unique_user_op(user_id, user_embedding)
             neg_dis = tf.matmul(unique_user_embedding, neg_item_embedding, transpose_b=True)
+            neg_dis, _ = tf.nn.top_k(neg_dis, 800)
 
-            hr, mrr = metric_cal_op(user_id, pos_dis, unique_user_id, neg_dis)
+            hr, map = metric_cal_op(user_id, pos_dis, unique_user_id, neg_dis)
 
             loss = match_loss + rank_loss
+
+            global_step = tf.train.get_or_create_global_step()
+            eval_metric_ops = {
+                "eval_loss": tf.metrics.mean(loss),
+                'rank_loss': tf.metrics.mean(rank_loss),
+                'match_loss': tf.metrics.mean(match_loss),
+                "auc": auc_metric,
+                'mrr': mrr_metric,
+                'map': tf.metrics.mean(map),
+                'hr': tf.metrics.mean(hr),
+            }
+
             output_spec = tf.estimator.EstimatorSpec(
                 mode=mode,
                 loss=loss,
-                eval_metric_ops={
-                    "eval_loss": tf.metrics.mean(loss),
-                    'rank_loss': tf.metrics.mean(rank_loss),
-                    'match_loss': tf.metrics.mean(match_loss),
-                    "auc": auc_metric,
-                    'mrr': mrr_metric,
-                    'mrr_v2': tf.metrics.mean(mrr),
-                    'hr': tf.metrics.mean(hr),
-                },
+                eval_metric_ops=eval_metric_ops,
+                evaluation_hooks=[LogviewMetricHook(eval_metric_ops, global_step, logviewMetricWriter)]
             )
 
         else:
@@ -381,26 +395,26 @@ def metric_cal_op(user_id, pos_dis, unique_user_id, neg_dis):
             user_id_2_samples[user_id[i]].append((pos_dis[i], 1))
 
         hit_size = 0
-        mrr_sum = 0.0
         map_sum = 0.0
         for user_id, samples in user_id_2_samples.items():
             samples = sorted(samples, reverse=True)
 
             ap_sum = 0.0
-            ap_size = 0
-            is_first = True
+            ap_index = 0
             for i in range(min(len(samples), 800)):
                 if samples[i][1] == 1:
                     hit_size += 1
 
-                    if is_first:
-                        mrr_sum += 1.0 / (i + 1)
-                        is_first = False
+                    ap_index += 1
+                    ap_sum += ap_index / (i + 1)
+
+            if ap_index > 0:
+                map_sum += ap_sum / ap_index
 
         hr = hit_size * 1.0 / len(pos_dis)
-        mrr = mrr_sum / len(user_id_2_samples)
+        map = map_sum / len(user_id_2_samples)
 
-        return np.float32(hr), np.float32(mrr)
+        return np.float32(hr), np.float32(map)
 
     y = tf.py_func(user_func, [user_id, pos_dis, unique_user_id, neg_dis], [tf.float32, tf.float32])
     return y
@@ -411,14 +425,6 @@ def metric_mrr(predicts, neg_size):
     true_rank = tf.slice(tf.where(tf.equal(ranks, 0)), [0, 1], [FLAGS.train_batch_size, 1])
     mrr = tf.reduce_mean(1.0 / tf.to_float(true_rank + 1))
     return mrr
-
-
-def test_input_fn(_input_fn):
-    iterator = _input_fn().make_one_shot_iterator()
-    one_element = iterator.get_next()
-    with tf.Session() as sess:
-        for i in range(5):
-            print(sess.run(one_element))
 
 
 def main(_):
