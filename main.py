@@ -4,7 +4,7 @@ import sys
 import numpy as np
 import constant as C
 from modeling import MatchNet
-from helper import LogviewMetricHook, LogviewMetricWriter
+from helper import LogviewMetricHook, LogviewMetricWriter, LogviewTrainHook
 
 flags = tf.flags
 
@@ -262,7 +262,15 @@ def model_fn_builder(config):
         user_emb = matchNet.user_embedding(rank_features)
         content_emb = matchNet.item_embedding(rank_features)
 
-        predictions = tf.reduce_sum(user_emb * content_emb, axis=1)
+        content_var = tf.get_variable(
+            'content_bais',
+            [1000000],
+            initializer=tf.truncated_normal_initializer(stddev=0.01))
+
+        # content_bais = tf.nn.embedding_lookup(content_var, tf.string_to_hash_bucket_fast(rank_features.get('content_id'), 1000000))
+
+
+        predictions = tf.reduce_sum(user_emb * content_emb, axis=1)  # + content_bais
         rank_loss = tf.losses.sigmoid_cross_entropy(labels, predictions)
 
         return rank_loss, tf.metrics.auc(labels, tf.sigmoid(predictions))
@@ -272,9 +280,16 @@ def model_fn_builder(config):
         matchNet = MatchNet(config)
 
         if mode == tf.estimator.ModeKeys.TRAIN:
-            rank_loss, auc_metric = _rank_loss_and_metric(matchNet, config, features)
-            match_loss, mrr_metric = _match_loss_and_metric_v3(matchNet, config, features)
-            alpha = 0.2
+            rank_loss = 0
+            match_loss = 0
+            alpha = max(min(config.get('rank_loss_weight'), 1.0), 0.0)
+
+            if alpha > 0:
+                rank_loss, _ = _rank_loss_and_metric(matchNet, config, features)
+
+            if alpha < 1.0:
+                match_loss, _ = _match_loss_and_metric_v3(matchNet, config, features)
+
             loss = rank_loss * alpha + match_loss * (1.0 - alpha)
             # loss += 0.1 * tf.reduce_mean(tf.reduce_sum(tf.square(user_emb), axis=1))
             # loss += 0.1 * tf.reduce_mean(tf.reduce_sum(tf.square(content_emb), axis=1))
@@ -293,12 +308,13 @@ def model_fn_builder(config):
 
             opt = tf.train.AdamOptimizer(learning_rate)
             train_op = opt.minimize(loss, global_step=tf.train.get_global_step())
-            hook = tf.train.ProfilerHook(save_steps=1000, output_dir=FLAGS.tmp_dir)
+            # hook = tf.train.ProfilerHook(save_steps=10000, output_dir=FLAGS.tmp_dir)
+            train_hook = LogviewTrainHook(loss, learning_rate, global_step, logviewMetricWriter)
             output_spec = tf.estimator.EstimatorSpec(
                 mode=mode,
                 loss=loss,
                 train_op=train_op,
-                training_chief_hooks=[hook]
+                training_chief_hooks=[train_hook]
             )
 
         elif mode == tf.estimator.ModeKeys.EVAL:
@@ -431,54 +447,68 @@ def main(_):
     config = {
         'embedding_size': 64,  # user and item final dim size
         'neg_sample_size': 5,
+        'rank_loss_weight': 1.0,  # [0,1]
         'user': [
-            # {
-            #     'name': 'user_id',
-            #     'size': 1000000,
-            #     'value_index': 0,
-            # },
             {
-                'name': 'age',
-                'size': 100,
-                'need_hash': True,
-                'type': 'one_hot'
+                'name': 'user_age',
+                'type': 'one_hot',  # one_hot, dense, seq, scalar
+                'layers': [
+                    {'type': 'hash', 'size': 100},
+                    {'type': 'embedding', 'name': 'age_emb', 'size': 100, 'dim': 64},
+                ]
             },
             {
-                'name': 'gender',
-                'size': 100,
-                'need_hash': True,
-                'type': 'one_hot'
+                'name': 'user_gender',
+                'type': 'one_hot',
+                'layers': [
+                    {'type': 'hash', 'size': 100},
+                    {'type': 'embedding', 'name': 'gender_emb', 'size': 100, 'dim': 64},
+                ]
             },
             {
-                'name': 'purchase_total',
-                'size': 100,
-                'need_hash': True,
-                'type': 'one_hot'  # one_hot,dense,
+                'name': 'user_pay_class',
+                'type': 'one_hot',
+                'layers': [
+                    {'type': 'hash', 'size': 100},
+                    {'type': 'embedding', 'name': 'pay_class_emb', 'size': 100, 'dim': 64},
+                ]
             },
             {
-                'name': 'user_rootcates',
-                'size': 10000,
-                'need_hash': True,
+                'name': 'rootcate_id_seq',
                 'type': 'seq',
-                'seq_len': 5,  # if type=seq, need this param
-                # 'weight_index': 444,  # if equal weights, this param could be None
-                # 'time_index': 555,  # if it has time embedding,the value should be int type
-                'reduce_method': 'mean',  # mean,sum,mlp,attention,rnn,cnn
-                # 'layer_size': 2 #mlp,attention need this param
+                'seq_len': 10,  # if type=seq, need this param
+                # 'extra_columns': ['user_weight'],
+                'layers': [
+                    {'type': 'hash', 'size': 10000},
+                    {'type': 'embedding', 'name': 'cate1_u_emb', 'size': 10000, 'dim': 64},
+                    {'type': 'reduce_sum'},
+                ]
             }
         ],
         'item': [
             {
                 'name': 'content_id',
-                'size': 1000000,
-                'need_hash': True,
-                'type': 'one_hot'
+                'type': 'one_hot',
+                'layers': [
+                    {'type': 'hash', 'size': 1000000},
+                    {'type': 'embedding', 'name': 'content_emb', 'size': 1000000, 'dim': 64},
+                ]
             },
             {
                 'name': 'cate_id',
-                'size': 100000,
-                'need_hash': True,
-                'type': 'one_hot'
+                'type': 'one_hot',
+                'layers': [
+                    {'type': 'hash', 'size': 100000},
+                    {'type': 'embedding', 'name': 'cate_emb', 'size': 100000, 'dim': 64},
+                ]
+            },
+            {
+                'name': 'cate1_id',
+                'type': 'one_hot',
+                'layers': [
+                    {'type': 'hash', 'size': 10000},
+                    {'type': 'embedding', 'name': 'cate1_emb', 'size': 10000, 'dim': 64},
+                ]
             },
         ],
     }
