@@ -18,7 +18,7 @@ class MatchNet(object):
 
             for index, layer in enumerate(fea_layers):
                 layer_type = layer.get('type')
-                params = {'name': fea_name}
+                params = {'__name__': fea_name}
                 params.update(layer)
                 layer_fn = build_layer_fn(layer_type, params)
 

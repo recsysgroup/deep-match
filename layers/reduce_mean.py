@@ -2,7 +2,7 @@ import tensorflow as tf
 
 
 def build_layer_fn(params):
-    name = params.get('name')
+    name = params.get('__name__')
 
     def layer_fn(tensor, features):
         mask = tf.expand_dims(tf.cast(features.get(name + '_mask'), dtype=tf.float32), axis=-1)

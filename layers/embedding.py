@@ -2,7 +2,7 @@ import tensorflow as tf
 
 
 def build_layer_fn(params):
-    name = params.get('name')
+    name = params.get('__name__')
     embedding_size = params.get('size')
     embedding_dim = params.get('dim')
     with tf.variable_scope(name, reuse=tf.AUTO_REUSE):

@@ -3,7 +3,7 @@ import tensorflow as tf
 
 class LogviewMetricWriter(object):
     def __init__(self):
-        self.writer = tf.summary.MetricsWriter('.', flush_secs=10)
+        self.writer = tf.summary.MetricsWriter('.', max_queue=1, flush_secs=10)
 
     def add_scalar(self, _metric_values, _step):
         for k, v in _metric_values.items():

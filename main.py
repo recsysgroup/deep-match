@@ -45,17 +45,17 @@ logviewMetricWriter = LogviewMetricWriter()
 
 def parse_seq_str_op(text, max_seq_len):
     def user_func(text):
-        ids = []
+        vals = []
         mask = []
         parts = text.split(',')
         for i in range(min(len(parts), max_seq_len)):
-            ids.append(parts[i])
+            vals.append(parts[i])
             mask.append(1.0)
 
-        ids = ids + [''] * (max_seq_len - len(ids))
+        vals = vals + ['0'] * (max_seq_len - len(vals))
         mask = mask + [0.0] * (max_seq_len - len(mask))
 
-        return ids, mask
+        return vals, mask
 
     y = tf.py_func(user_func, [text], [tf.string, tf.double])
     y[0].set_shape((max_seq_len))
@@ -67,17 +67,23 @@ def table_dataset_and_decode_builder(table, config, extra_fields=[],
                                      fea_sides=['user', 'item'],
                                      slice_id=FLAGS.task_index,
                                      slice_count=FLAGS.worker_count):
-    feas = []
+    columns = []
     for fea_side in fea_sides:
-        feas.extend(config.get(fea_side))
+        for fea in config.get(fea_side):
+            columns.append((fea.get(C.CONFIG_FEATURE_NAME), fea.get(C.CONFIG_FEATURE_TYPE), fea))
+
+            extra_columns = fea.get(C.CONFIG_FEATURE_EXTRA_COLUMNS, [])
+            for column in extra_columns:
+                columns.append((column.get(C.CONFIG_FEATURE_NAME), column.get(C.CONFIG_FEATURE_TYPE), column))
 
     record_defaults = []
     selected_cols = []
     colname_2_index = {}
-    for fea in feas:
+
+    for column in columns:
         record_defaults.append('')
-        selected_cols.append(fea.get('name'))
-        colname_2_index[fea.get('name')] = len(colname_2_index)
+        selected_cols.append(column[0])
+        colname_2_index[column[0]] = len(colname_2_index)
 
     for field in extra_fields:
         selected_cols.append(field[0])
@@ -87,23 +93,21 @@ def table_dataset_and_decode_builder(table, config, extra_fields=[],
     def _decode_record(*line):
         ret_dict = {}
 
-        for fea in feas:
-            fea_name = fea.get('name')
-            fea_type = fea.get('type')
-
-            if fea_type == 'one_hot':
-                ret_dict[fea_name] = line[colname_2_index.get(fea_name)]
-
-            if fea_type == 'seq':
-                value_and_mask = parse_seq_str_op(line[colname_2_index.get(fea_name)], fea.get('seq_len'))
-                ret_dict[fea_name] = value_and_mask[0]
-                ret_dict[fea_name + '_mask'] = value_and_mask[1]
+        for name, type, col in columns:
+            if type == C.CONFIG_FEATURE_TYPE_SINGLE:
+                ret_dict[name] = line[colname_2_index.get(name)]
+            elif type == C.CONFIG_FEATURE_TYPE_SEQ:
+                _value, _mask = parse_seq_str_op(line[colname_2_index.get(name)], col.get('seq_len'))
+                ret_dict[name] = _value
+                ret_dict[name + '_mask'] = _mask
 
         for field in extra_fields:
             ret_dict[field[0]] = line[colname_2_index.get(field[0])]
 
         return ret_dict
 
+    tf.logging.info("read table [{0}], record_defaults is {1}, selected_cols is {2}".format(table, str(record_defaults),
+                                                                                            str(selected_cols)))
     d = tf.data.TableRecordDataset([table],
                                    record_defaults=record_defaults,
                                    slice_id=slice_id,
@@ -256,22 +260,26 @@ def model_fn_builder(config):
 
     def _rank_loss_and_metric(matchNet, config, features):
         rank_features = features.get('rank_features')
+        print rank_features
 
         labels = rank_features['label']
 
         user_emb = matchNet.user_embedding(rank_features)
         content_emb = matchNet.item_embedding(rank_features)
 
-        content_var = tf.get_variable(
-            'content_bais',
-            [1000000],
-            initializer=tf.truncated_normal_initializer(stddev=0.01))
+        # content_var = tf.get_variable(
+        #     'content_bais',
+        #     [1000000],
+        #     initializer=tf.truncated_normal_initializer(stddev=0.01))
 
         # content_bais = tf.nn.embedding_lookup(content_var, tf.string_to_hash_bucket_fast(rank_features.get('content_id'), 1000000))
 
 
         predictions = tf.reduce_sum(user_emb * content_emb, axis=1)  # + content_bais
         rank_loss = tf.losses.sigmoid_cross_entropy(labels, predictions)
+        # l2 = 1e-4
+        # rank_loss += l2 * tf.reduce_mean(tf.reduce_sum(tf.square(user_emb), axis=1))
+        # rank_loss += l2 * tf.reduce_mean(tf.reduce_sum(tf.square(content_emb), axis=1))
 
         return rank_loss, tf.metrics.auc(labels, tf.sigmoid(predictions))
 
@@ -326,13 +334,9 @@ def model_fn_builder(config):
             neg_item_embedding = matchNet.item_embedding(features.get('neg_features'))
 
             user_id = features.get('match_features').get('user_id')
-            pos_dis = tf.reduce_sum(user_embedding * item_embedding, axis=-1)
 
-            unique_user_id, unique_user_embedding = unique_user_op(user_id, user_embedding)
-            neg_dis = tf.matmul(unique_user_embedding, neg_item_embedding, transpose_b=True)
-            neg_dis, _ = tf.nn.top_k(neg_dis, 800)
-
-            hr, map = metric_cal_op(user_id, pos_dis, unique_user_id, neg_dis)
+            # hr, map = metric_cal_op(user_id, user_embedding, item_embedding, neg_item_embedding)
+            hr, map = 0, 0
 
             loss = match_loss + rank_loss
 
@@ -396,7 +400,12 @@ def unique_user_op(user_id, user_embedding):
     return y
 
 
-def metric_cal_op(user_id, pos_dis, unique_user_id, neg_dis):
+def metric_cal_op(user_id, user_embedding, item_embedding, neg_item_embedding):
+    pos_dis = tf.reduce_sum(user_embedding * item_embedding, axis=-1)
+    unique_user_id, unique_user_embedding = unique_user_op(user_id, user_embedding)
+    neg_dis = tf.matmul(unique_user_embedding, neg_item_embedding, transpose_b=True)
+    neg_dis, _ = tf.nn.top_k(neg_dis, 800)
+
     def user_func(user_id, pos_dis, unique_user_id, neg_dis):
         user_id_2_samples = {}
 
@@ -444,51 +453,131 @@ def metric_mrr(predicts, neg_size):
 
 
 def main(_):
+    # config = {
+    #     'embedding_size': 64,  # user and item final dim size
+    #     'neg_sample_size': 5,
+    #     'rank_loss_weight': 1.0,  # [0,1]
+    #     'user': [
+    #         {
+    #             'name': 'user_age',
+    #             'type': 'single',
+    #             'layers': [
+    #                 {'type': 'hash', 'size': 100},
+    #                 {'type': 'embedding', 'name': 'age_emb', 'size': 100, 'dim': 64},
+    #             ]
+    #         },
+    #         {
+    #             'name': 'user_gender',
+    #             'type': 'single',
+    #             'layers': [
+    #                 {'type': 'hash', 'size': 100},
+    #                 {'type': 'embedding', 'name': 'gender_emb', 'size': 100, 'dim': 64},
+    #             ]
+    #         },
+    #         {
+    #             'name': 'user_pay_class',
+    #             'type': 'single',
+    #             'layers': [
+    #                 {'type': 'hash', 'size': 100},
+    #                 {'type': 'embedding', 'name': 'pay_class_emb', 'size': 100, 'dim': 64},
+    #             ]
+    #         },
+    #         {
+    #             'name': 'rootcate_id_seq',
+    #             'type': 'seq',
+    #             'seq_len': 5,  # if type=seq, need this param
+    #             'extra_columns': [{
+    #                 'name': 'rootcate_weight_seq',
+    #                 'type': 'seq',
+    #                 'seq_len': 5
+    #             }],
+    #             'layers': [
+    #                 {'type': 'hash', 'size': 10000},
+    #                 {'type': 'embedding', 'name': 'cate1_emb', 'size': 10000, 'dim': 64},
+    #                 # {'type': 'reduce_weighted_mean', 'weighted_name': 'rootcate_weight_seq'},
+    #                 {'type': 'reduce_mean'},
+    #             ]
+    #         }
+    #     ],
+    #     'item': [
+    #         {
+    #             'name': 'content_id',
+    #             'type': 'single',
+    #             'layers': [
+    #                 {'type': 'hash', 'size': 1000000},
+    #                 {'type': 'embedding', 'name': 'content_emb', 'size': 1000000, 'dim': 64},
+    #             ]
+    #         },
+    #         {
+    #             'name': 'cate_id',
+    #             'type': 'single',
+    #             'layers': [
+    #                 {'type': 'hash', 'size': 100000},
+    #                 {'type': 'embedding', 'name': 'cate_emb', 'size': 100000, 'dim': 64},
+    #             ]
+    #         },
+    #         {
+    #             'name': 'cate1_id',
+    #             'type': 'single',
+    #             'layers': [
+    #                 {'type': 'hash', 'size': 10000},
+    #                 {'type': 'embedding', 'name': 'cate1_emb', 'size': 10000, 'dim': 64},
+    #             ]
+    #         },
+    #         # {
+    #         #     'name': 'w_h_ratio',
+    #         #     'type': 'scalar',
+    #         #     'layers': [
+    #         #         {'type': 'hash', 'size': 10000},
+    #         #         {'type': 'embedding', 'name': 'cate1_emb', 'size': 10000, 'dim': 64},
+    #         #     ]
+    #         # },
+    #     ],
+    # }
     config = {
         'embedding_size': 64,  # user and item final dim size
         'neg_sample_size': 5,
         'rank_loss_weight': 1.0,  # [0,1]
         'user': [
             {
-                'name': 'user_age',
-                'type': 'one_hot',  # one_hot, dense, seq, scalar
+                'name': 'age',
+                'type': 'single',
                 'layers': [
                     {'type': 'hash', 'size': 100},
                     {'type': 'embedding', 'name': 'age_emb', 'size': 100, 'dim': 64},
                 ]
             },
             {
-                'name': 'user_gender',
-                'type': 'one_hot',
+                'name': 'gender',
+                'type': 'single',
                 'layers': [
                     {'type': 'hash', 'size': 100},
                     {'type': 'embedding', 'name': 'gender_emb', 'size': 100, 'dim': 64},
                 ]
             },
             {
-                'name': 'user_pay_class',
-                'type': 'one_hot',
+                'name': 'purchase_total',
+                'type': 'single',
                 'layers': [
                     {'type': 'hash', 'size': 100},
                     {'type': 'embedding', 'name': 'pay_class_emb', 'size': 100, 'dim': 64},
                 ]
             },
             {
-                'name': 'rootcate_id_seq',
+                'name': 'user_rootcates',
                 'type': 'seq',
-                'seq_len': 10,  # if type=seq, need this param
-                # 'extra_columns': ['user_weight'],
+                'seq_len': 5,  # if type=seq, need this param
                 'layers': [
                     {'type': 'hash', 'size': 10000},
-                    {'type': 'embedding', 'name': 'cate1_u_emb', 'size': 10000, 'dim': 64},
-                    {'type': 'reduce_sum'},
+                    {'type': 'embedding', 'name': 'cate1_emb', 'size': 10000, 'dim': 64},
+                    {'type': 'reduce_mean'},
                 ]
             }
         ],
         'item': [
             {
                 'name': 'content_id',
-                'type': 'one_hot',
+                'type': 'single',
                 'layers': [
                     {'type': 'hash', 'size': 1000000},
                     {'type': 'embedding', 'name': 'content_emb', 'size': 1000000, 'dim': 64},
@@ -496,22 +585,19 @@ def main(_):
             },
             {
                 'name': 'cate_id',
-                'type': 'one_hot',
+                'type': 'single',
                 'layers': [
                     {'type': 'hash', 'size': 100000},
                     {'type': 'embedding', 'name': 'cate_emb', 'size': 100000, 'dim': 64},
                 ]
             },
-            {
-                'name': 'cate1_id',
-                'type': 'one_hot',
-                'layers': [
-                    {'type': 'hash', 'size': 10000},
-                    {'type': 'embedding', 'name': 'cate1_emb', 'size': 10000, 'dim': 64},
-                ]
-            },
         ],
     }
+
+
+    # tf.feature_column.numeric_column()
+    # tf.feature_column.bucketized_column
+    # tf.feature_column.input_layer
 
     model_fn = model_fn_builder(config)
 
