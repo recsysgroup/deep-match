@@ -2,6 +2,7 @@ import tensorflow as tf
 import argparse
 import sys
 import numpy as np
+import json
 import constant as C
 from modeling import MatchNet
 from helper import LogviewMetricHook, LogviewMetricWriter, LogviewTrainHook
@@ -30,6 +31,7 @@ flags.DEFINE_integer("train_max_step", 1000, "")
 flags.DEFINE_boolean("do_train", True, "")
 flags.DEFINE_boolean("do_predict", False, "")
 flags.DEFINE_float("learning_rate", 1e-4, "")
+flags.DEFINE_string("config", None, "")
 
 # task
 flags.DEFINE_string("input_emb_len", None, "")
@@ -39,6 +41,7 @@ flags.DEFINE_string("eval_match_table", None, "")
 flags.DEFINE_string("train_neg_table", None, "")
 flags.DEFINE_string("eval_neg_table", None, "")
 flags.DEFINE_string("task_type", None, "train,user_embedding,item_embedding,predict")
+flags.DEFINE_boolean("drop_out", True, "")
 
 logviewMetricWriter = LogviewMetricWriter()
 
@@ -68,13 +71,12 @@ def table_dataset_and_decode_builder(table, config, extra_fields=[],
                                      slice_id=FLAGS.task_index,
                                      slice_count=FLAGS.worker_count):
     columns = []
-    for fea_side in fea_sides:
-        for fea in config.get(fea_side):
-            columns.append((fea.get(C.CONFIG_FEATURE_NAME), fea.get(C.CONFIG_FEATURE_TYPE), fea))
 
-            extra_columns = fea.get(C.CONFIG_FEATURE_EXTRA_COLUMNS, [])
-            for column in extra_columns:
-                columns.append((column.get(C.CONFIG_FEATURE_NAME), column.get(C.CONFIG_FEATURE_TYPE), column))
+    for column in config.get(C.CONFIG_COLUMNS):
+        col_side, col_name = column.get(C.CONFIG_COLUMNS_NAME).split(':')
+        col_type = column.get(C.CONFIG_COLUMNS_TYPE)
+        if col_side in fea_sides:
+            columns.append((col_name, col_type, column))
 
     record_defaults = []
     selected_cols = []
@@ -94,9 +96,9 @@ def table_dataset_and_decode_builder(table, config, extra_fields=[],
         ret_dict = {}
 
         for name, type, col in columns:
-            if type == C.CONFIG_FEATURE_TYPE_SINGLE:
+            if type == C.CONFIG_COLUMNS_TYPE_SINGLE:
                 ret_dict[name] = line[colname_2_index.get(name)]
-            elif type == C.CONFIG_FEATURE_TYPE_SEQ:
+            elif type == C.CONFIG_COLUMNS_TYPE_SEQ:
                 _value, _mask = parse_seq_str_op(line[colname_2_index.get(name)], col.get('seq_len'))
                 ret_dict[name] = _value
                 ret_dict[name + '_mask'] = _mask
@@ -128,7 +130,7 @@ def predict_input_fn_builder(table, config):
                                                                fea_sides=['user'])
 
         dataset = dataset.repeat(1)
-        dataset = dataset.map(decode)
+        dataset = dataset.map(decode, num_parallel_calls=C.NUM_PARALLEL_CALLS)
         dataset = dataset.batch(batch_size=FLAGS.predict_batch_size)
         iterator = dataset.make_one_shot_iterator()
         one_element = iterator.get_next()
@@ -142,22 +144,24 @@ def eval_input_fn_builder(match_table, table, config):
         rank_dataset, rank_decode = table_dataset_and_decode_builder(table, config, extra_fields=[('label', 0)])
 
         rank_dataset = rank_dataset.repeat()
-        rank_dataset = rank_dataset.shuffle(buffer_size=1000)
-        rank_dataset = rank_dataset.map(rank_decode)
+        # rank_dataset = rank_dataset.shuffle(buffer_size=1000)
+        rank_dataset = rank_dataset.map(rank_decode, num_parallel_calls=C.NUM_PARALLEL_CALLS)
         rank_dataset = rank_dataset.batch(batch_size=FLAGS.train_batch_size)
 
+        # match_dataset, match_decode = table_dataset_and_decode_builder(match_table, config,
+        #                                                                extra_fields=[('label', 0), ('user_id', '')])
         match_dataset, match_decode = table_dataset_and_decode_builder(match_table, config,
-                                                                       extra_fields=[('label', 0), ('user_id', '')])
+                                                                       extra_fields=[('label', 0)])
         match_dataset = match_dataset.repeat()
-        match_dataset = match_dataset.shuffle(buffer_size=10000)
-        match_dataset = match_dataset.map(match_decode)
+        # match_dataset = match_dataset.shuffle(buffer_size=10000)
+        match_dataset = match_dataset.map(match_decode, num_parallel_calls=C.NUM_PARALLEL_CALLS)
         match_dataset = match_dataset.batch(batch_size=FLAGS.train_batch_size)
 
         neg_dataset, neg_decode = table_dataset_and_decode_builder(FLAGS.eval_neg_table, config, fea_sides=['item'],
                                                                    slice_id=0, slice_count=1, )
         neg_dataset = neg_dataset.repeat()
         neg_dataset = neg_dataset.shuffle(buffer_size=100000)
-        neg_dataset = neg_dataset.map(neg_decode)
+        neg_dataset = neg_dataset.map(neg_decode, num_parallel_calls=C.NUM_PARALLEL_CALLS)
         neg_dataset = neg_dataset.batch(batch_size=10000)
 
         return tf.data.Dataset.zip(
@@ -172,21 +176,24 @@ def input_fn_builder(match_table, table, config):
 
         rank_dataset = rank_dataset.repeat()
         rank_dataset = rank_dataset.shuffle(buffer_size=1000)
-        rank_dataset = rank_dataset.map(rank_decode)
+        rank_dataset = rank_dataset.map(rank_decode, num_parallel_calls=C.NUM_PARALLEL_CALLS)
         rank_dataset = rank_dataset.batch(batch_size=FLAGS.train_batch_size)
+        rank_dataset = rank_dataset.prefetch(buffer_size=FLAGS.train_batch_size)
 
         match_dataset, match_decode = table_dataset_and_decode_builder(match_table, config, [('label', 0)])
         match_dataset = match_dataset.repeat()
         match_dataset = match_dataset.shuffle(buffer_size=10000)
-        match_dataset = match_dataset.map(match_decode)
+        match_dataset = match_dataset.map(match_decode, num_parallel_calls=C.NUM_PARALLEL_CALLS)
         match_dataset = match_dataset.batch(batch_size=FLAGS.train_batch_size)
+        match_dataset = match_dataset.prefetch(buffer_size=FLAGS.train_batch_size)
 
         neg_dataset, neg_decode = table_dataset_and_decode_builder(FLAGS.train_neg_table, config, fea_sides=['item'],
                                                                    slice_id=0, slice_count=1, )
         neg_dataset = neg_dataset.repeat()
         neg_dataset = neg_dataset.shuffle(buffer_size=100000)
-        neg_dataset = neg_dataset.map(neg_decode)
+        neg_dataset = neg_dataset.map(neg_decode, num_parallel_calls=C.NUM_PARALLEL_CALLS)
         neg_dataset = neg_dataset.batch(batch_size=100)
+        neg_dataset = neg_dataset.prefetch(buffer_size=100)
 
         return tf.data.Dataset.zip(
             {'match_features': match_dataset, 'rank_features': rank_dataset, 'neg_features': neg_dataset})
@@ -258,25 +265,18 @@ def model_fn_builder(config):
 
         return match_loss, tf.metrics.auc(labels, tf.sigmoid(predictions))
 
-    def _rank_loss_and_metric(matchNet, config, features):
+    def _rank_loss_and_metric(matchNet, config, features, training):
         rank_features = features.get('rank_features')
         print rank_features
 
         labels = rank_features['label']
 
-        user_emb = matchNet.user_embedding(rank_features)
-        content_emb = matchNet.item_embedding(rank_features)
+        user_emb = matchNet.user_embedding(rank_features, training)
+        content_emb = matchNet.item_embedding(rank_features, training)
 
-        # content_var = tf.get_variable(
-        #     'content_bais',
-        #     [1000000],
-        #     initializer=tf.truncated_normal_initializer(stddev=0.01))
-
-        # content_bais = tf.nn.embedding_lookup(content_var, tf.string_to_hash_bucket_fast(rank_features.get('content_id'), 1000000))
-
-
-        predictions = tf.reduce_sum(user_emb * content_emb, axis=1)  # + content_bais
+        predictions = tf.reduce_sum(user_emb * content_emb, axis=1)
         rank_loss = tf.losses.sigmoid_cross_entropy(labels, predictions)
+        rank_loss += tf.losses.get_regularization_loss()
         # l2 = 1e-4
         # rank_loss += l2 * tf.reduce_mean(tf.reduce_sum(tf.square(user_emb), axis=1))
         # rank_loss += l2 * tf.reduce_mean(tf.reduce_sum(tf.square(content_emb), axis=1))
@@ -293,7 +293,7 @@ def model_fn_builder(config):
             alpha = max(min(config.get('rank_loss_weight'), 1.0), 0.0)
 
             if alpha > 0:
-                rank_loss, _ = _rank_loss_and_metric(matchNet, config, features)
+                rank_loss, _ = _rank_loss_and_metric(matchNet, config, features, True)
 
             if alpha < 1.0:
                 match_loss, _ = _match_loss_and_metric_v3(matchNet, config, features)
@@ -326,14 +326,14 @@ def model_fn_builder(config):
             )
 
         elif mode == tf.estimator.ModeKeys.EVAL:
-            rank_loss, auc_metric = _rank_loss_and_metric(matchNet, config, features)
+            rank_loss, auc_metric = _rank_loss_and_metric(matchNet, config, features, False)
             match_loss, mrr_metric = _match_loss_and_metric(matchNet, config, features)
 
-            user_embedding = matchNet.user_embedding(features.get('match_features'))
-            item_embedding = matchNet.item_embedding(features.get('match_features'))
-            neg_item_embedding = matchNet.item_embedding(features.get('neg_features'))
-
-            user_id = features.get('match_features').get('user_id')
+            # user_embedding = matchNet.user_embedding(features.get('match_features'))
+            # item_embedding = matchNet.item_embedding(features.get('match_features'))
+            # neg_item_embedding = matchNet.item_embedding(features.get('neg_features'))
+            #
+            # user_id = features.get('match_features').get('user_id')
 
             # hr, map = metric_cal_op(user_id, user_embedding, item_embedding, neg_item_embedding)
             hr, map = 0, 0
@@ -453,151 +453,8 @@ def metric_mrr(predicts, neg_size):
 
 
 def main(_):
-    # config = {
-    #     'embedding_size': 64,  # user and item final dim size
-    #     'neg_sample_size': 5,
-    #     'rank_loss_weight': 1.0,  # [0,1]
-    #     'user': [
-    #         {
-    #             'name': 'user_age',
-    #             'type': 'single',
-    #             'layers': [
-    #                 {'type': 'hash', 'size': 100},
-    #                 {'type': 'embedding', 'name': 'age_emb', 'size': 100, 'dim': 64},
-    #             ]
-    #         },
-    #         {
-    #             'name': 'user_gender',
-    #             'type': 'single',
-    #             'layers': [
-    #                 {'type': 'hash', 'size': 100},
-    #                 {'type': 'embedding', 'name': 'gender_emb', 'size': 100, 'dim': 64},
-    #             ]
-    #         },
-    #         {
-    #             'name': 'user_pay_class',
-    #             'type': 'single',
-    #             'layers': [
-    #                 {'type': 'hash', 'size': 100},
-    #                 {'type': 'embedding', 'name': 'pay_class_emb', 'size': 100, 'dim': 64},
-    #             ]
-    #         },
-    #         {
-    #             'name': 'rootcate_id_seq',
-    #             'type': 'seq',
-    #             'seq_len': 5,  # if type=seq, need this param
-    #             'extra_columns': [{
-    #                 'name': 'rootcate_weight_seq',
-    #                 'type': 'seq',
-    #                 'seq_len': 5
-    #             }],
-    #             'layers': [
-    #                 {'type': 'hash', 'size': 10000},
-    #                 {'type': 'embedding', 'name': 'cate1_emb', 'size': 10000, 'dim': 64},
-    #                 # {'type': 'reduce_weighted_mean', 'weighted_name': 'rootcate_weight_seq'},
-    #                 {'type': 'reduce_mean'},
-    #             ]
-    #         }
-    #     ],
-    #     'item': [
-    #         {
-    #             'name': 'content_id',
-    #             'type': 'single',
-    #             'layers': [
-    #                 {'type': 'hash', 'size': 1000000},
-    #                 {'type': 'embedding', 'name': 'content_emb', 'size': 1000000, 'dim': 64},
-    #             ]
-    #         },
-    #         {
-    #             'name': 'cate_id',
-    #             'type': 'single',
-    #             'layers': [
-    #                 {'type': 'hash', 'size': 100000},
-    #                 {'type': 'embedding', 'name': 'cate_emb', 'size': 100000, 'dim': 64},
-    #             ]
-    #         },
-    #         {
-    #             'name': 'cate1_id',
-    #             'type': 'single',
-    #             'layers': [
-    #                 {'type': 'hash', 'size': 10000},
-    #                 {'type': 'embedding', 'name': 'cate1_emb', 'size': 10000, 'dim': 64},
-    #             ]
-    #         },
-    #         # {
-    #         #     'name': 'w_h_ratio',
-    #         #     'type': 'scalar',
-    #         #     'layers': [
-    #         #         {'type': 'hash', 'size': 10000},
-    #         #         {'type': 'embedding', 'name': 'cate1_emb', 'size': 10000, 'dim': 64},
-    #         #     ]
-    #         # },
-    #     ],
-    # }
-    config = {
-        'embedding_size': 64,  # user and item final dim size
-        'neg_sample_size': 5,
-        'rank_loss_weight': 1.0,  # [0,1]
-        'user': [
-            {
-                'name': 'age',
-                'type': 'single',
-                'layers': [
-                    {'type': 'hash', 'size': 100},
-                    {'type': 'embedding', 'name': 'age_emb', 'size': 100, 'dim': 64},
-                ]
-            },
-            {
-                'name': 'gender',
-                'type': 'single',
-                'layers': [
-                    {'type': 'hash', 'size': 100},
-                    {'type': 'embedding', 'name': 'gender_emb', 'size': 100, 'dim': 64},
-                ]
-            },
-            {
-                'name': 'purchase_total',
-                'type': 'single',
-                'layers': [
-                    {'type': 'hash', 'size': 100},
-                    {'type': 'embedding', 'name': 'pay_class_emb', 'size': 100, 'dim': 64},
-                ]
-            },
-            {
-                'name': 'user_rootcates',
-                'type': 'seq',
-                'seq_len': 5,  # if type=seq, need this param
-                'layers': [
-                    {'type': 'hash', 'size': 10000},
-                    {'type': 'embedding', 'name': 'cate1_emb', 'size': 10000, 'dim': 64},
-                    {'type': 'reduce_mean'},
-                ]
-            }
-        ],
-        'item': [
-            {
-                'name': 'content_id',
-                'type': 'single',
-                'layers': [
-                    {'type': 'hash', 'size': 1000000},
-                    {'type': 'embedding', 'name': 'content_emb', 'size': 1000000, 'dim': 64},
-                ]
-            },
-            {
-                'name': 'cate_id',
-                'type': 'single',
-                'layers': [
-                    {'type': 'hash', 'size': 100000},
-                    {'type': 'embedding', 'name': 'cate_emb', 'size': 100000, 'dim': 64},
-                ]
-            },
-        ],
-    }
-
-
-    # tf.feature_column.numeric_column()
-    # tf.feature_column.bucketized_column
-    # tf.feature_column.input_layer
+    with open(FLAGS.config, 'r') as f:
+        config = json.load(f)
 
     model_fn = model_fn_builder(config)
 
@@ -610,6 +467,7 @@ def main(_):
         session_config=session_config,
         distribute=distribution,
         save_checkpoints_steps=50000,
+        keep_checkpoint_max=10,
     )
 
     params = {
@@ -624,10 +482,14 @@ def main(_):
         config=run_config,
     )
 
-    print(config)
+    print(json.dumps(config))
+    from multiprocessing import cpu_count
+    print("cpu count is {0}".format(cpu_count()))
 
     if FLAGS.task_type == C.TASK_TYPE_TRAIN:
         print(FLAGS.task_index, FLAGS.job_name, FLAGS.worker_count)
+        if FLAGS.task_index == 1:
+            FLAGS.drop_out = False
         if FLAGS.worker_count > 1:
             FLAGS.worker_count -= 1
         if FLAGS.task_index > 0:
