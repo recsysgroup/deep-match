@@ -6,6 +6,7 @@ import json
 import constant as C
 from modeling import MatchNet
 from helper import LogviewMetricHook, LogviewMetricWriter, LogviewTrainHook
+from losses import build_loss_fn
 
 flags = tf.flags
 
@@ -139,64 +140,74 @@ def predict_input_fn_builder(table, config):
     return input_fn
 
 
-def eval_input_fn_builder(match_table, table, config):
+def eval_input_fn_builder(config):
     def input_fn():
-        rank_dataset, rank_decode = table_dataset_and_decode_builder(table, config, extra_fields=[('label', 0)])
+        _zip = {}
+        if FLAGS.eval_table:
+            rank_dataset, rank_decode = table_dataset_and_decode_builder(FLAGS.eval_table, config,
+                                                                         extra_fields=[('label', 0)])
+            rank_dataset = rank_dataset.repeat()
+            rank_dataset = rank_dataset.map(rank_decode, num_parallel_calls=C.NUM_PARALLEL_CALLS)
+            rank_dataset = rank_dataset.batch(batch_size=FLAGS.train_batch_size)
+            _zip['rank_features'] = rank_dataset
 
-        rank_dataset = rank_dataset.repeat()
-        # rank_dataset = rank_dataset.shuffle(buffer_size=1000)
-        rank_dataset = rank_dataset.map(rank_decode, num_parallel_calls=C.NUM_PARALLEL_CALLS)
-        rank_dataset = rank_dataset.batch(batch_size=FLAGS.train_batch_size)
+        if FLAGS.eval_match_table:
+            match_dataset, match_decode = table_dataset_and_decode_builder(FLAGS.eval_match_table, config,
+                                                                           extra_fields=[('label', 0)])
+            match_dataset = match_dataset.repeat()
+            match_dataset = match_dataset.map(match_decode, num_parallel_calls=C.NUM_PARALLEL_CALLS)
+            match_dataset = match_dataset.batch(batch_size=FLAGS.train_batch_size)
+            _zip['match_features'] = match_dataset
 
-        # match_dataset, match_decode = table_dataset_and_decode_builder(match_table, config,
-        #                                                                extra_fields=[('label', 0), ('user_id', '')])
-        match_dataset, match_decode = table_dataset_and_decode_builder(match_table, config,
-                                                                       extra_fields=[('label', 0)])
-        match_dataset = match_dataset.repeat()
-        # match_dataset = match_dataset.shuffle(buffer_size=10000)
-        match_dataset = match_dataset.map(match_decode, num_parallel_calls=C.NUM_PARALLEL_CALLS)
-        match_dataset = match_dataset.batch(batch_size=FLAGS.train_batch_size)
+        if FLAGS.eval_neg_table:
+            neg_dataset, neg_decode = table_dataset_and_decode_builder(FLAGS.eval_neg_table, config, fea_sides=['item'],
+                                                                       slice_id=0, slice_count=1, )
+            neg_dataset = neg_dataset.repeat()
+            neg_dataset = neg_dataset.shuffle(buffer_size=100000)
+            neg_dataset = neg_dataset.map(neg_decode, num_parallel_calls=C.NUM_PARALLEL_CALLS)
+            neg_dataset = neg_dataset.batch(batch_size=10000)
+            _zip['neg_features'] = neg_dataset
 
-        neg_dataset, neg_decode = table_dataset_and_decode_builder(FLAGS.eval_neg_table, config, fea_sides=['item'],
-                                                                   slice_id=0, slice_count=1, )
-        neg_dataset = neg_dataset.repeat()
-        neg_dataset = neg_dataset.shuffle(buffer_size=100000)
-        neg_dataset = neg_dataset.map(neg_decode, num_parallel_calls=C.NUM_PARALLEL_CALLS)
-        neg_dataset = neg_dataset.batch(batch_size=10000)
-
-        return tf.data.Dataset.zip(
-            {'match_features': match_dataset, 'rank_features': rank_dataset, 'neg_features': neg_dataset})
+        return tf.data.Dataset.zip(_zip)
 
     return input_fn
 
 
-def input_fn_builder(match_table, table, config):
+def train_input_fn_builder(config):
     def input_fn():
-        rank_dataset, rank_decode = table_dataset_and_decode_builder(table, config, [('label', 0)])
+        _zip = {}
 
-        rank_dataset = rank_dataset.repeat()
-        rank_dataset = rank_dataset.shuffle(buffer_size=1000)
-        rank_dataset = rank_dataset.map(rank_decode, num_parallel_calls=C.NUM_PARALLEL_CALLS)
-        rank_dataset = rank_dataset.batch(batch_size=FLAGS.train_batch_size)
-        rank_dataset = rank_dataset.prefetch(buffer_size=FLAGS.train_batch_size)
+        if FLAGS.train_table:
+            rank_dataset, rank_decode = table_dataset_and_decode_builder(FLAGS.train_table, config, [('label', 0)])
+            rank_dataset = rank_dataset.repeat()
+            rank_dataset = rank_dataset.shuffle(buffer_size=1000)
+            rank_dataset = rank_dataset.map(rank_decode, num_parallel_calls=C.NUM_PARALLEL_CALLS)
+            rank_dataset = rank_dataset.batch(batch_size=FLAGS.train_batch_size)
+            rank_dataset = rank_dataset.prefetch(buffer_size=FLAGS.train_batch_size)
+            _zip['rank_features'] = rank_dataset
 
-        match_dataset, match_decode = table_dataset_and_decode_builder(match_table, config, [('label', 0)])
-        match_dataset = match_dataset.repeat()
-        match_dataset = match_dataset.shuffle(buffer_size=10000)
-        match_dataset = match_dataset.map(match_decode, num_parallel_calls=C.NUM_PARALLEL_CALLS)
-        match_dataset = match_dataset.batch(batch_size=FLAGS.train_batch_size)
-        match_dataset = match_dataset.prefetch(buffer_size=FLAGS.train_batch_size)
+        if FLAGS.train_match_table:
+            match_dataset, match_decode = table_dataset_and_decode_builder(FLAGS.train_match_table, config,
+                                                                           [('label', 0)])
+            match_dataset = match_dataset.repeat()
+            match_dataset = match_dataset.shuffle(buffer_size=10000)
+            match_dataset = match_dataset.map(match_decode, num_parallel_calls=C.NUM_PARALLEL_CALLS)
+            match_dataset = match_dataset.batch(batch_size=FLAGS.train_batch_size)
+            match_dataset = match_dataset.prefetch(buffer_size=FLAGS.train_batch_size)
+            _zip['match_features'] = match_dataset
 
-        neg_dataset, neg_decode = table_dataset_and_decode_builder(FLAGS.train_neg_table, config, fea_sides=['item'],
-                                                                   slice_id=0, slice_count=1, )
-        neg_dataset = neg_dataset.repeat()
-        neg_dataset = neg_dataset.shuffle(buffer_size=100000)
-        neg_dataset = neg_dataset.map(neg_decode, num_parallel_calls=C.NUM_PARALLEL_CALLS)
-        neg_dataset = neg_dataset.batch(batch_size=100)
-        neg_dataset = neg_dataset.prefetch(buffer_size=100)
+        if FLAGS.train_neg_table:
+            neg_dataset, neg_decode = table_dataset_and_decode_builder(FLAGS.train_neg_table, config,
+                                                                       fea_sides=['item'],
+                                                                       slice_id=0, slice_count=1, )
+            neg_dataset = neg_dataset.repeat()
+            neg_dataset = neg_dataset.shuffle(buffer_size=100000)
+            neg_dataset = neg_dataset.map(neg_decode, num_parallel_calls=C.NUM_PARALLEL_CALLS)
+            neg_dataset = neg_dataset.batch(batch_size=100)
+            neg_dataset = neg_dataset.prefetch(buffer_size=100)
+            _zip['neg_features'] = neg_dataset
 
-        return tf.data.Dataset.zip(
-            {'match_features': match_dataset, 'rank_features': rank_dataset, 'neg_features': neg_dataset})
+        return tf.data.Dataset.zip(_zip)
 
     return input_fn
 
@@ -287,20 +298,15 @@ def model_fn_builder(config):
 
         matchNet = MatchNet(config)
 
+        _loss = None
+
+        if mode != tf.estimator.ModeKeys.PREDICT:
+            _loss_params = config.get(C.CONFIG_LOSS)
+            _loss_name = _loss_params.get(C.CONFIG_LOSS_NAME)
+            loss_fn = build_loss_fn(_loss_name, _loss_params)
+            _loss = loss_fn(matchNet, features)
+
         if mode == tf.estimator.ModeKeys.TRAIN:
-            rank_loss = 0
-            match_loss = 0
-            alpha = max(min(config.get('rank_loss_weight'), 1.0), 0.0)
-
-            if alpha > 0:
-                rank_loss, _ = _rank_loss_and_metric(matchNet, config, features, True)
-
-            if alpha < 1.0:
-                match_loss, _ = _match_loss_and_metric_v3(matchNet, config, features)
-
-            loss = rank_loss * alpha + match_loss * (1.0 - alpha)
-            # loss += 0.1 * tf.reduce_mean(tf.reduce_sum(tf.square(user_emb), axis=1))
-            # loss += 0.1 * tf.reduce_mean(tf.reduce_sum(tf.square(content_emb), axis=1))
 
             global_step = tf.train.get_or_create_global_step()
             learning_rate = tf.constant(value=params["learning_rate"], shape=[], dtype=tf.float32)
@@ -315,19 +321,25 @@ def model_fn_builder(config):
                 cycle=False)
 
             opt = tf.train.AdamOptimizer(learning_rate)
-            train_op = opt.minimize(loss, global_step=tf.train.get_global_step())
+            train_op = opt.minimize(_loss, global_step=tf.train.get_global_step())
             # hook = tf.train.ProfilerHook(save_steps=10000, output_dir=FLAGS.tmp_dir)
-            train_hook = LogviewTrainHook(loss, learning_rate, global_step, logviewMetricWriter)
+            train_hook = LogviewTrainHook(_loss, learning_rate, global_step, logviewMetricWriter)
             output_spec = tf.estimator.EstimatorSpec(
                 mode=mode,
-                loss=loss,
+                loss=_loss,
                 train_op=train_op,
                 training_chief_hooks=[train_hook]
             )
 
         elif mode == tf.estimator.ModeKeys.EVAL:
-            rank_loss, auc_metric = _rank_loss_and_metric(matchNet, config, features, False)
-            match_loss, mrr_metric = _match_loss_and_metric(matchNet, config, features)
+            rank_features = features.get('rank_features')
+            labels = rank_features['label']
+
+            user_emb = matchNet.user_embedding(rank_features, False)
+            content_emb = matchNet.item_embedding(rank_features, False)
+
+            predictions = tf.reduce_sum(user_emb * content_emb, axis=1)
+            _auc_metric = tf.metrics.auc(labels, tf.sigmoid(predictions))
 
             # user_embedding = matchNet.user_embedding(features.get('match_features'))
             # item_embedding = matchNet.item_embedding(features.get('match_features'))
@@ -338,22 +350,20 @@ def model_fn_builder(config):
             # hr, map = metric_cal_op(user_id, user_embedding, item_embedding, neg_item_embedding)
             hr, map = 0, 0
 
-            loss = match_loss + rank_loss
-
             global_step = tf.train.get_or_create_global_step()
             eval_metric_ops = {
-                "eval_loss": tf.metrics.mean(loss),
-                'rank_loss': tf.metrics.mean(rank_loss),
-                'match_loss': tf.metrics.mean(match_loss),
-                "auc": auc_metric,
-                'mrr': mrr_metric,
+                "eval_loss": tf.metrics.mean(_loss),
+                # 'rank_loss': tf.metrics.mean(rank_loss),
+                # 'match_loss': tf.metrics.mean(match_loss),
+                "auc": _auc_metric,
+                # 'mrr': mrr_metric,
                 'map': tf.metrics.mean(map),
                 'hr': tf.metrics.mean(hr),
             }
 
             output_spec = tf.estimator.EstimatorSpec(
                 mode=mode,
-                loss=loss,
+                loss=_loss,
                 eval_metric_ops=eval_metric_ops,
                 evaluation_hooks=[LogviewMetricHook(eval_metric_ops, global_step, logviewMetricWriter)]
             )
@@ -494,8 +504,8 @@ def main(_):
             FLAGS.worker_count -= 1
         if FLAGS.task_index > 0:
             FLAGS.task_index -= 1
-        train_input_fn = input_fn_builder(FLAGS.train_match_table, FLAGS.train_table, config)
-        eval_input_fn = eval_input_fn_builder(FLAGS.eval_match_table, FLAGS.eval_table, config)
+        train_input_fn = train_input_fn_builder(config)
+        eval_input_fn = eval_input_fn_builder(config)
         train_spec = tf.estimator.TrainSpec(input_fn=train_input_fn, max_steps=FLAGS.train_max_step)
         eval_spec = tf.estimator.EvalSpec(input_fn=eval_input_fn, throttle_secs=60, start_delay_secs=30)
         tf.estimator.train_and_evaluate(estimator, train_spec, eval_spec)

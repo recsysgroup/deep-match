@@ -45,6 +45,13 @@
       "type": "single"
     }
   ],
+  "losses": {
+  },
+  "evaluations": [
+    {
+      "name": "auc"
+    }
+  ],
   "user": [
     {
       "name": "user_age",
