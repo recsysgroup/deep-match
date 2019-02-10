@@ -1,10 +1,11 @@
 import tensorflow as tf
+import constant as C
 
 
 def build_loss_fn(params):
     def loss_fn(matchNet, features):
-        rank_features = features.get('rank_features')
-        labels = rank_features['label']
+        rank_features = features.get(C.CONFIG_INPUT_POINT_FEATURES)
+        labels = rank_features[C.CONFIG_INPUT_LABEL]
 
         user_emb = matchNet.user_embedding(rank_features)
         item_emb = matchNet.item_embedding(rank_features)

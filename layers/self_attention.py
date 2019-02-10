@@ -40,6 +40,8 @@ def build_layer_fn(params):
 
         emb = tf.reduce_mean(context_layer, axis=1)
 
+        tf.summary.histogram('self_attention', attention_probs)
+
         emb = tf.Print(emb, [tf.slice(attention_scores, [0, 0, 0], [1, 1, -1]),
                              tf.slice(attention_probs, [0, 0, 0], [1, 1, -1])],
                        summarize=10000)

@@ -16,4 +16,21 @@ CONFIG_COLUMNS_TYPE_SEQ = 'seq'
 CONFIG_LOSS = 'loss'
 CONFIG_LOSS_NAME = 'name'
 
+CONFIG_EVALS = 'evals'
+CONFIG_EVALS_NAME = 'name'
+
+CONFIG_INPUT_LABEL = 'label'
+CONFIG_INPUT_USER = '__user__'
+CONFIG_INPUT_ITEM = '__item__'
+CONFIG_INPUT_POINT_FEATURES = 'point_features'
+CONFIG_INPUT_PAIR_FEATURES = 'pair_features'
+CONFIG_INPUT_POS_FEATURES = 'pos_features'
+CONFIG_INPUT_NEG_FEATURES = 'neg_features'
+
+CONFIG_TRAIN_BATCH_SIZE = 'train_batch_size'
+CONFIG_TRAIN_NEG_SIZE = 'train_neg_size'
+CONFIG_EVAL_POINT_SIZE = 'eval_point_size'
+CONFIG_EVAL_POS_SIZE = 'eval_pos_size'
+CONFIG_EVAL_NEG_SIZE = 'eval_neg_size'
+
 NUM_PARALLEL_CALLS = 96
