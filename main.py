@@ -187,17 +187,16 @@ def train_input_fn_builder(config):
             rank_dataset = rank_dataset.shuffle(buffer_size=10000)
             rank_dataset = rank_dataset.map(rank_decode, num_parallel_calls=C.NUM_PARALLEL_CALLS)
             rank_dataset = rank_dataset.batch(batch_size=config.get(C.CONFIG_TRAIN_BATCH_SIZE))
-            rank_dataset = rank_dataset.prefetch(buffer_size=FLAGS.train_batch_size)
+            rank_dataset = rank_dataset.prefetch(buffer_size=config.get(C.CONFIG_TRAIN_BATCH_SIZE))
             _zip[C.CONFIG_INPUT_POINT_FEATURES] = rank_dataset
 
         if FLAGS.train_pos_table:
-            match_dataset, match_decode = table_dataset_and_decode_builder(FLAGS.train_pos_table, config,
-                                                                           [('label', 0)])
+            match_dataset, match_decode = table_dataset_and_decode_builder(FLAGS.train_pos_table, config)
             match_dataset = match_dataset.repeat()
             match_dataset = match_dataset.shuffle(buffer_size=10000)
             match_dataset = match_dataset.map(match_decode, num_parallel_calls=C.NUM_PARALLEL_CALLS)
             match_dataset = match_dataset.batch(batch_size=config.get(C.CONFIG_TRAIN_BATCH_SIZE))
-            match_dataset = match_dataset.prefetch(buffer_size=FLAGS.train_batch_size)
+            match_dataset = match_dataset.prefetch(buffer_size=config.get(C.CONFIG_TRAIN_BATCH_SIZE))
             _zip[C.CONFIG_INPUT_POS_FEATURES] = match_dataset
 
         if FLAGS.train_neg_table:
@@ -205,10 +204,10 @@ def train_input_fn_builder(config):
                                                                        fea_sides=['item'],
                                                                        slice_id=0, slice_count=1, )
             neg_dataset = neg_dataset.repeat()
-            neg_dataset = neg_dataset.shuffle(buffer_size=100000)
+            neg_dataset = neg_dataset.shuffle(buffer_size=10000)
             neg_dataset = neg_dataset.map(neg_decode, num_parallel_calls=C.NUM_PARALLEL_CALLS)
             neg_dataset = neg_dataset.batch(batch_size=config.get(C.CONFIG_TRAIN_NEG_SIZE))
-            neg_dataset = neg_dataset.prefetch(buffer_size=100)
+            neg_dataset = neg_dataset.prefetch(buffer_size=config.get(C.CONFIG_TRAIN_NEG_SIZE))
             _zip[C.CONFIG_INPUT_NEG_FEATURES] = neg_dataset
 
         return tf.data.Dataset.zip(_zip)
@@ -241,62 +240,6 @@ def model_fn_builder(config):
 
         return match_loss, tf.metrics.mean(metric_mrr(prob, neg_size))
 
-    def _match_loss_and_metric_v2(matchNet, config, features):
-        match_features = features.get('match_features')
-        neg_item_features = features.get('neg_features')
-
-        user_emb_for_match = matchNet.user_embedding(match_features)
-        item_emb_for_match = matchNet.item_embedding(match_features)
-
-        neg_item_emb = matchNet.item_embedding(neg_item_features)
-
-        pos_dis = tf.reduce_sum(user_emb_for_match * item_emb_for_match, axis=-1)
-        neg_dis = tf.matmul(user_emb_for_match, neg_item_emb, transpose_b=True)
-
-        dis = tf.concat([tf.expand_dims(pos_dis, -1), neg_dis], 1)
-
-        prob = tf.nn.softmax(dis)
-        match_loss = -tf.reduce_sum(tf.log(tf.slice(prob, [0, 0], [-1, 1]))) / FLAGS.train_batch_size
-
-        return match_loss, tf.metrics.mean(metric_mrr(prob, 100))
-
-    def _match_loss_and_metric_v3(matchNet, config, features):
-        match_features = features.get('match_features')
-        neg_item_features = features.get('neg_features')
-
-        user_emb_for_match = matchNet.user_embedding(match_features)
-        item_emb_for_match = matchNet.item_embedding(match_features)
-
-        neg_item_emb = matchNet.item_embedding(neg_item_features)
-
-        pos_dis = tf.reduce_sum(user_emb_for_match * item_emb_for_match, axis=-1)
-        neg_dis = tf.matmul(user_emb_for_match, neg_item_emb, transpose_b=True)
-
-        predictions = tf.concat([pos_dis, tf.reshape(neg_dis, [-1])], 0)
-        labels = tf.concat(
-            [tf.constant([1] * FLAGS.train_batch_size), tf.constant([0] * (FLAGS.train_batch_size * 100))], 0)
-
-        match_loss = tf.losses.sigmoid_cross_entropy(labels, predictions)
-
-        return match_loss, tf.metrics.auc(labels, tf.sigmoid(predictions))
-
-    def _rank_loss_and_metric(matchNet, config, features, training):
-        rank_features = features.get('rank_features')
-        print rank_features
-
-        labels = rank_features['label']
-
-        user_emb = matchNet.user_embedding(rank_features, training)
-        content_emb = matchNet.item_embedding(rank_features, training)
-
-        predictions = tf.reduce_sum(user_emb * content_emb, axis=1)
-        rank_loss = tf.losses.sigmoid_cross_entropy(labels, predictions)
-        rank_loss += tf.losses.get_regularization_loss()
-        # l2 = 1e-4
-        # rank_loss += l2 * tf.reduce_mean(tf.reduce_sum(tf.square(user_emb), axis=1))
-        # rank_loss += l2 * tf.reduce_mean(tf.reduce_sum(tf.square(content_emb), axis=1))
-
-        return rank_loss, tf.metrics.auc(labels, tf.sigmoid(predictions))
 
     def model_fn(features, labels, mode, params):  # pylint: disable=unused-argument
 
@@ -333,19 +276,11 @@ def model_fn_builder(config):
             )
 
         elif mode == tf.estimator.ModeKeys.EVAL:
-            # user_embedding = matchNet.user_embedding(features.get('match_features'))
-            # item_embedding = matchNet.item_embedding(features.get('match_features'))
-            # neg_item_embedding = matchNet.item_embedding(features.get('neg_features'))
-            #
-            # user_id = features.get('match_features').get('user_id')
-
-            # hr, map = metric_cal_op(user_id, user_embedding, item_embedding, neg_item_embedding)
-            # hr, map = 0, 0
-            _loss_params = config.get(C.CONFIG_LOSS)
-            _loss_name = _loss_params.get(C.CONFIG_LOSS_NAME)
-            loss_fn = build_loss_fn(_loss_name, _loss_params)
-            _loss = loss_fn(matchNet, features)
-            eval_metric_ops = {'eval_loss': _loss}
+            # _loss_params = config.get(C.CONFIG_LOSS)
+            # _loss_name = _loss_params.get(C.CONFIG_LOSS_NAME)
+            # loss_fn = build_loss_fn(_loss_name, _loss_params)
+            # _loss = loss_fn(matchNet, features)
+            eval_metric_ops = {}  # {'eval_loss': _loss}
 
             for _eval in config.get(C.CONFIG_EVALS):
                 _eval_name = _eval.get(C.CONFIG_EVALS_NAME)
@@ -389,51 +324,6 @@ def model_fn_builder(config):
         return output_spec
 
     return model_fn
-
-
-def metric_cal_op(user_id, user_embedding, item_embedding, neg_item_embedding):
-    pos_dis = tf.reduce_sum(user_embedding * item_embedding, axis=-1)
-    unique_user_id, unique_user_embedding = unique_user_op(user_id, user_embedding)
-    neg_dis = tf.matmul(unique_user_embedding, neg_item_embedding, transpose_b=True)
-    neg_dis, _ = tf.nn.top_k(neg_dis, 800)
-
-    def user_func(user_id, pos_dis, unique_user_id, neg_dis):
-        user_id_2_samples = {}
-
-        for i in range(len(unique_user_id)):
-            samples = []
-            for dis in neg_dis[i]:
-                samples.append((dis, 0))
-
-            user_id_2_samples[unique_user_id[i]] = samples
-
-        for i in range(len(user_id)):
-            user_id_2_samples[user_id[i]].append((pos_dis[i], 1))
-
-        hit_size = 0
-        map_sum = 0.0
-        for user_id, samples in user_id_2_samples.items():
-            samples = sorted(samples, reverse=True)
-
-            ap_sum = 0.0
-            ap_index = 0
-            for i in range(min(len(samples), 800)):
-                if samples[i][1] == 1:
-                    hit_size += 1
-
-                    ap_index += 1
-                    ap_sum += ap_index / (i + 1)
-
-            if ap_index > 0:
-                map_sum += ap_sum / ap_index
-
-        hr = hit_size * 1.0 / len(pos_dis)
-        map = map_sum / len(user_id_2_samples)
-
-        return np.float32(hr), np.float32(map)
-
-    y = tf.py_func(user_func, [user_id, pos_dis, unique_user_id, neg_dis], [tf.float32, tf.float32])
-    return y
 
 
 def metric_mrr(predicts, neg_size):

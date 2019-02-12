@@ -45,9 +45,13 @@
       "type": "single"
     }
   ],
-  "losses": {
+  "loss": {
   },
-  "evaluations": [
+  "aggregators": {
+    "user": "sum",
+    "item": "sum"
+  },
+  "evals": [
     {
       "name": "auc"
     }

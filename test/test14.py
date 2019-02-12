@@ -21,18 +21,24 @@ r = 0.8 + r
 b = tf.cast(tf.floor(r), dtype=tf.float32)
 print 'b:' + str(r.get_shape())
 
-b = tf.tile(tf.expand_dims(b,-1), [1, 1, 4])
+b = tf.tile(tf.expand_dims(b, -1), [1, 1, 4])
 
 e = tf.multiply(c, b)
 
+f = tf.constant([1, 2, 3, 4], dtype=tf.float32)
+f = tf.expand_dims(f, axis=-1)
+f = tf.expand_dims(f, axis=0)
+f = tf.tile(f, [2, 1, 1])
+
+cc = tf.matmul(c, f)
+
+print f
 
 with tf.Session() as session:
     session.run(tf.global_variables_initializer())
 
-    l = session.run([c,b,e])
-
+    l = session.run([c, b, e, cc])
 
     for i in l:
         print '###'
         print i
-

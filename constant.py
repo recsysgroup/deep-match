@@ -33,4 +33,6 @@ CONFIG_EVAL_POINT_SIZE = 'eval_point_size'
 CONFIG_EVAL_POS_SIZE = 'eval_pos_size'
 CONFIG_EVAL_NEG_SIZE = 'eval_neg_size'
 
+CONFIG_AGGREGATORS = 'aggregators'
+
 NUM_PARALLEL_CALLS = 96

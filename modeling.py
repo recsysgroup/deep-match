@@ -1,6 +1,7 @@
 import tensorflow as tf
 import constant as C
 from layers import build_layer_fn
+from aggregators import build_aggregator_fn
 
 
 class MatchNet(object):
@@ -28,7 +29,12 @@ class MatchNet(object):
 
             emb_list.append(fea_tensor)
 
-        emb_sum = tf.reduce_sum(tf.stack(emb_list, axis=2), axis=-1)
+        _aggregator_params = self.config.get(C.CONFIG_AGGREGATORS).get(name)
+        _aggregator_params['__name__'] = name
+        _aggregator_name = _aggregator_params.get('name')
+        aggregator_fn = build_aggregator_fn(_aggregator_name, _aggregator_params)
+
+        emb_sum = aggregator_fn(emb_list)
 
         return emb_sum
 
