@@ -12,9 +12,9 @@ def build_aggregator_fn(params):
         _, field_size, dim = tensor.get_shape().as_list()
         with tf.variable_scope(name + "_aggregator", reuse=tf.AUTO_REUSE):
             regularizer = tf.contrib.layers.l2_regularizer(scale=l2)
-            query_layer = tf.layers.dense(tensor, dim, activation=tf.nn.tanh, use_bias=False,
+            query_layer = tf.layers.dense(tensor, dim, activation=tf.nn.relu, use_bias=False,
                                           kernel_regularizer=regularizer)
-            key_layer = tf.layers.dense(tensor, dim, activation=tf.nn.tanh, use_bias=False,
+            key_layer = tf.layers.dense(tensor, dim, activation=tf.nn.relu, use_bias=False,
                                         kernel_regularizer=regularizer)
 
         # [B, F, F]
