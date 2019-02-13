@@ -1,79 +1,92 @@
 {
   "embedding_size": 64,
-  "neg_sample_size": 5,
-  "rank_loss_weight": 1.0,
+  "train_batch_size": 128,
+  "train_neg_size": 128,
+  "eval_point_size": 10000,
+  "eval_pos_size": 10000,
+  "eval_neg_size": 3883,
   "columns": [
     {
       "name": "user:user_id",
       "type": "single"
     },
     {
-      "name": "user:user_age",
+      "name": "user:gender",
       "type": "single"
     },
     {
-      "name": "user:user_gender",
+      "name": "user:age",
       "type": "single"
     },
     {
-      "name": "user:user_pay_class",
+      "name": "user:occupation",
       "type": "single"
     },
     {
-      "name": "user:rootcate_id_seq",
+      "name": "user:zip_code",
+      "type": "single"
+    },
+    {
+      "name": "user:watched_id_seq",
       "type": "seq",
-      "seq_len": 5
+      "seq_len": 10
     },
     {
-      "name": "item:content_id",
-      "type": "single"
-    },
-    {
-      "name": "item:cate_id",
-      "type": "single"
-    },
-    {
-      "name": "item:cate1_id",
-      "type": "single"
-    },
-    {
-      "name": "item:w_h_ratio",
-      "type": "single"
-    },
-    {
-      "name": "item:ctr",
+      "name": "item:item_id",
       "type": "single"
     }
   ],
   "loss": {
+    "name": "neg_bpr",
+    "l2": 0.0001
   },
   "aggregators": {
-    "user": "sum",
-    "item": "sum"
+    "user": {
+      "name": "self_attention",
+      "l2": 1e-6
+    },
+    "item": {
+      "name": "sum"
+    }
   },
   "evals": [
     {
       "name": "auc"
+    },
+    {
+      "name": "hr",
+      "topk": [
+        10,
+        50,
+        100
+      ]
+    },
+    {
+      "name": "map",
+      "topk": [
+        10,
+        50,
+        100
+      ]
     }
   ],
   "user": [
     {
-      "name": "user_age",
+      "name": "user_id",
       "layers": [
         {
           "type": "hash",
-          "size": 100
+          "size": 100000
         },
         {
           "type": "embedding",
-          "name": "age_emb",
-          "size": 100,
-          "dim": 64
+          "name": "user_emb",
+          "size": 100000
         }
       ]
     },
     {
-      "name": "user_gender",
+      "name": "gender",
       "layers": [
         {
           "type": "hash",
@@ -82,68 +95,73 @@
         {
           "type": "embedding",
           "name": "gender_emb",
-          "size": 100,
-          "dim": 64
-        }
-      ]
-    },
-    {
-      "name": "user_pay_class",
-      "layers": [
-        {
-          "type": "hash",
           "size": 100
-        },
-        {
-          "type": "embedding",
-          "name": "pay_class_emb",
-          "size": 100,
-          "dim": 64
         }
       ]
     },
     {
-      "name": "user_profile",
+      "name": "age",
       "layers": [
         {
-          "type": "concat",
-          "fields": [
-            "user_age",
-            "user_gender",
-            "user_pay_class"
-          ]
-        },
-        {
           "type": "hash",
-          "size": 100000
+          "size": 1000
         },
         {
           "type": "embedding",
-          "name": "user_profile",
-          "size": 100000,
-          "dim": 64
+          "name": "age_emb",
+          "size": 1000
         }
       ]
     },
     {
-      "name": "user_id",
+      "name": "occupation",
       "layers": [
         {
           "type": "hash",
-          "size": 10000000
+          "size": 10000
         },
         {
           "type": "embedding",
-          "name": "user_embedding",
-          "size": 10000000,
-          "dim": 64
+          "name": "occupation_emb",
+          "size": 10000
+        }
+      ]
+    },
+    {
+      "name": "zip_code",
+      "layers": [
+        {
+          "type": "hash",
+          "size": 10000
+        },
+        {
+          "type": "embedding",
+          "name": "zip_code_emb",
+          "size": 10000
+        }
+      ]
+    },
+    {
+      "name": "watched_id_seq",
+      "layers": [
+        {
+          "type": "hash",
+          "size": 1000000
+        },
+        {
+          "type": "embedding",
+          "name": "item_emb",
+          "size": 1000000
+        },
+        {
+          "type": "reduce_mean"
         }
       ]
     }
   ],
   "item": [
     {
-      "name": "content_id",
+      "name": "item_id",
       "type": "single",
       "layers": [
         {
@@ -152,67 +170,8 @@
         },
         {
           "type": "embedding",
-          "name": "content_emb",
-          "size": 1000000,
-          "dim": 64
-        }
-      ]
-    },
-    {
-      "name": "cate_id",
-      "type": "single",
-      "layers": [
-        {
-          "type": "hash",
-          "size": 100000
-        },
-        {
-          "type": "embedding",
-          "name": "cate_emb",
-          "size": 100000,
-          "dim": 64
-        }
-      ]
-    },
-    {
-      "name": "cate1_id",
-      "type": "single",
-      "layers": [
-        {
-          "type": "hash",
-          "size": 10000
-        },
-        {
-          "type": "embedding",
-          "name": "cate1_emb",
-          "size": 10000,
-          "dim": 64
-        }
-      ]
-    },
-    {
-      "name": "w_h_ratio",
-      "type": "single",
-      "layers": [
-        {
-          "type": "number_embedding",
-          "min": 0,
-          "max": 2.0,
-          "size": 20,
-          "dim": 64
-        }
-      ]
-    },
-    {
-      "name": "ctr",
-      "type": "single",
-      "layers": [
-        {
-          "type": "number_embedding",
-          "min": 0,
-          "max": 1.0,
-          "size": 100,
-          "dim": 64
+          "name": "item_emb",
+          "size": 1000000
         }
       ]
     }
