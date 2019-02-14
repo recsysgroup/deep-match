@@ -13,8 +13,8 @@ def build_loss_fn(params):
         item_emb = matchNet.item_embedding(pos_features)
         neg_item_emb = matchNet.item_embedding(neg_features)
 
-        xui = tf.reduce_sum(tf.multiply(user_emb, item_emb), 1, keep_dims=True)
-        xuj = tf.reduce_sum(tf.multiply(user_emb, neg_item_emb), 1, keep_dims=True)
+        xui = matchNet.similarity(user_emb, item_emb)
+        xuj = matchNet.similarity(user_emb, neg_item_emb)
         xuij = xui - xuj
 
         l2_norm = tf.add_n([

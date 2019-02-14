@@ -2,6 +2,7 @@ import tensorflow as tf
 import constant as C
 from layers import build_layer_fn
 from aggregators import build_aggregator_fn
+from similarity import build_similarity_fn
 
 
 class MatchNet(object):
@@ -29,10 +30,10 @@ class MatchNet(object):
 
             emb_list.append(fea_tensor)
 
-        _aggregator_params = self.config.get(C.CONFIG_AGGREGATORS).get(name)
+        _aggregator_params = self.config.get(C.CONFIG_AGGREGATORS, {}).get(name, {})
         _aggregator_params['__name__'] = name
-        _aggregator_name = _aggregator_params.get('name')
-        aggregator_fn = build_aggregator_fn(_aggregator_name, _aggregator_params)
+        _aggregator_type = _aggregator_params.get(C.CONFIG_AGGREGATORS_TYPE)
+        aggregator_fn = build_aggregator_fn(_aggregator_type, _aggregator_params)
 
         emb_sum = aggregator_fn(emb_list)
 
@@ -53,3 +54,9 @@ class MatchNet(object):
 
     def item_embedding(self, features, training=False):
         return self._emb_sum('item', features, training)
+
+    def similarity(self, user_emb, item_emb):
+        _similarity_params = self.config.get(C.CONFIG_SIMILARITY, {})
+        _similarity_type = _similarity_params.get(C.CONFIG_SIMILARITY_TYPE)
+        _similarity_fn = build_similarity_fn(_similarity_type, _similarity_params)
+        return _similarity_fn(user_emb, item_emb)
