@@ -146,10 +146,10 @@ def table_dataset_and_decode_builder(table, config, extra_fields=[],
 def predict_input_fn_builder(table, config):
     def input_fn():
         if FLAGS.task_type == C.TASK_TYPE_ITEM_EMBEDDING:
-            dataset, decode = table_dataset_and_decode_builder(table, config, extra_fields=[('key', '')],
+            dataset, decode = table_dataset_and_decode_builder(table, config,
                                                                fea_sides=['item'])
         elif FLAGS.task_type == C.TASK_TYPE_USER_EMBEDDING:
-            dataset, decode = table_dataset_and_decode_builder(table, config, extra_fields=[('key', '')],
+            dataset, decode = table_dataset_and_decode_builder(table, config,
                                                                fea_sides=['user'])
 
         dataset = dataset.repeat(1)
@@ -327,13 +327,14 @@ def model_fn_builder(config):
         else:
             matchNet = MatchNet(config, False)
             predictions = {}
-            predictions['key'] = features.get('key')
             predict_type = FLAGS.task_type
             if predict_type == C.TASK_TYPE_USER_EMBEDDING:
+                predictions['__user__'] = features.get('__user__')
                 user_embedding = matchNet.user_embedding(features)
                 user_embedding = tf.reduce_join(tf.as_string(user_embedding, precision=5), 1, separator=',')
                 predictions['user_embedding'] = user_embedding
             elif predict_type == C.TASK_TYPE_ITEM_EMBEDDING:
+                predictions['__item__'] = features.get('__item__')
                 item_embedding = matchNet.item_embedding(features)
                 item_embedding = tf.reduce_join(tf.as_string(item_embedding, precision=5), 1, separator=',')
                 predictions['item_embedding'] = item_embedding
@@ -407,11 +408,15 @@ def main(_):
 
         writer = tf.python_io.TableWriter(FLAGS.output_table, slice_id=FLAGS.task_index)
 
+        _writen_num = 0
         for result in estimator.predict(input_fn=predict_input_fn):
+            _writen_num += 1
+            if _writen_num % 10000 == 0:
+                print('{0} records have been writen'.format(_writen_num))
             if FLAGS.task_type == C.TASK_TYPE_USER_EMBEDDING:
-                writer.write([result.get('key'), result.get('user_embedding')], [0, 1])
+                writer.write([result.get('__user__'), result.get('user_embedding')], [0, 1])
             elif FLAGS.task_type == C.TASK_TYPE_ITEM_EMBEDDING:
-                writer.write([result.get('key'), result.get('item_embedding')], [0, 1])
+                writer.write([result.get('__item__'), result.get('item_embedding')], [0, 1])
 
         writer.close()
 
