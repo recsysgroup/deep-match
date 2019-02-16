@@ -15,6 +15,8 @@ def build_loss_fn(params):
 
         xui = matchNet.similarity(user_emb, item_emb)
         xuj = matchNet.similarity(user_emb, neg_item_emb)
+        tf.summary.histogram("bpr_pos_score", xui)
+        tf.summary.histogram("bpr_neg_score", xuj)
         xuij = xui - xuj
 
         l2_norm = tf.add_n([

@@ -1,8 +1,9 @@
 import tensorflow as tf
+import constant as C
 
 
 def build_layer_fn(params):
-    name = params.get('__name__')
+    name = params.get(C.CONFIG_GLOBAL_FEATURE_NAME)
     _min = params.get('min') + 0.0
     _max = params.get('max') + 0.0
     _size = params.get('size')
@@ -19,7 +20,6 @@ def build_layer_fn(params):
         tensor = tf.maximum(tensor, tf.constant(_min))
         tensor = tf.floordiv(tensor - tf.constant(_min), tf.constant((_max - _min) / _size))
         tensor = tf.cast(tensor, dtype=tf.int32)
-        print tensor
         return tf.nn.embedding_lookup(embedding, tensor, name=name + '_lookup')
 
     return layer_fn

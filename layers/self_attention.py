@@ -1,14 +1,14 @@
 import tensorflow as tf
 import math
+import constant as C
 
 
 def build_layer_fn(params):
-    name = params.get('__name__')
+    name = params.get(C.CONFIG_GLOBAL_FEATURE_NAME)
     l2 = params.get('l2')
 
     def layer_fn(tensor, features):
         _, seq_len, dim = tensor.get_shape().as_list()
-        print 'dim: {0}, type: {1}'.format(dim, type(dim))
         with tf.variable_scope(name, reuse=tf.AUTO_REUSE):
             regularizer = tf.contrib.layers.l2_regularizer(scale=l2)
             query_layer = tf.layers.dense(tensor, dim, use_bias=False,
@@ -41,10 +41,6 @@ def build_layer_fn(params):
         emb = tf.reduce_mean(context_layer, axis=1)
 
         tf.summary.histogram('self_attention', attention_probs)
-
-        emb = tf.Print(emb, [tf.slice(attention_scores, [0, 0, 0], [1, 1, -1]),
-                             tf.slice(attention_probs, [0, 0, 0], [1, 1, -1])],
-                       summarize=10000)
 
         return emb
 

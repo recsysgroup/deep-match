@@ -67,6 +67,23 @@ def parse_seq_str_op(text, max_seq_len):
     return y
 
 
+def parse_dense_str_op(text, max_len):
+    def user_func(text):
+        vals = []
+        if text != '':
+            parts = text.split(',')
+            for i in range(min(len(parts), max_len)):
+                vals.append(float(parts[i]))
+
+        vals = vals + [0.0] * (max_len - len(vals))
+
+        return np.array(vals, dtype=np.float32)
+
+    y = tf.py_func(user_func, [text], tf.float32)
+    y.set_shape((max_len))
+    return y
+
+
 def table_dataset_and_decode_builder(table, config, extra_fields=[],
                                      fea_sides=['user', 'item'],
                                      slice_id=FLAGS.task_index,
@@ -105,6 +122,9 @@ def table_dataset_and_decode_builder(table, config, extra_fields=[],
                 _value, _mask = parse_seq_str_op(line[colname_2_index.get(name)], col.get('seq_len'))
                 ret_dict[name] = _value
                 ret_dict[name + '_mask'] = _mask
+            elif type == C.CONFIG_COLUMNS_TYPE_DENSE:
+                _value = parse_dense_str_op(line[colname_2_index.get(name)], col.get(C.CONFIG_COLUMNS_TYPE_DENSE_SIZE))
+                ret_dict[name] = _value
 
         for field in extra_fields:
             ret_dict[field[0]] = line[colname_2_index.get(field[0])]
@@ -240,12 +260,11 @@ def model_fn_builder(config):
 
         return match_loss, tf.metrics.mean(metric_mrr(prob, neg_size))
 
-
     def model_fn(features, labels, mode, params):  # pylint: disable=unused-argument
 
-        matchNet = MatchNet(config)
 
         if mode == tf.estimator.ModeKeys.TRAIN:
+            matchNet = MatchNet(config, True)
             _loss_params = config.get(C.CONFIG_LOSS)
             _loss_name = _loss_params.get(C.CONFIG_LOSS_NAME)
             loss_fn = build_loss_fn(_loss_name, _loss_params)
@@ -276,6 +295,7 @@ def model_fn_builder(config):
             )
 
         elif mode == tf.estimator.ModeKeys.EVAL:
+            matchNet = MatchNet(config, False)
             # _loss_params = config.get(C.CONFIG_LOSS)
             # _loss_name = _loss_params.get(C.CONFIG_LOSS_NAME)
             # loss_fn = build_loss_fn(_loss_name, _loss_params)
@@ -305,6 +325,7 @@ def model_fn_builder(config):
             )
 
         else:
+            matchNet = MatchNet(config, False)
             predictions = {}
             predictions['key'] = features.get('key')
             predict_type = FLAGS.task_type
@@ -347,7 +368,7 @@ def main(_):
         model_dir=FLAGS.model_dir,
         session_config=session_config,
         distribute=distribution,
-        save_checkpoints_steps=50000,
+        save_checkpoints_steps=10000,
         keep_checkpoint_max=10,
     )
 
@@ -378,7 +399,7 @@ def main(_):
         train_input_fn = train_input_fn_builder(config)
         eval_input_fn = eval_input_fn_builder(config)
         train_spec = tf.estimator.TrainSpec(input_fn=train_input_fn, max_steps=FLAGS.train_max_step)
-        eval_spec = tf.estimator.EvalSpec(input_fn=eval_input_fn, throttle_secs=60, start_delay_secs=30)
+        eval_spec = tf.estimator.EvalSpec(input_fn=eval_input_fn)
         tf.estimator.train_and_evaluate(estimator, train_spec, eval_spec)
 
     if FLAGS.task_type in (C.TASK_TYPE_USER_EMBEDDING, C.TASK_TYPE_ITEM_EMBEDDING):

@@ -6,10 +6,11 @@ from similarity import build_similarity_fn
 
 
 class MatchNet(object):
-    def __init__(self, config):
+    def __init__(self, config, training):
         self.config = config
+        self.training = training
 
-    def _emb_sum(self, name, features, training):
+    def _emb_sum(self, name, features):
         emb_list = []
         for fea in self.config.get(name):
             fea_name = fea.get(C.CONFIG_FEATURE_NAME)
@@ -18,10 +19,13 @@ class MatchNet(object):
             fea_tensor = features.get(fea_name)
 
             for index, layer in enumerate(fea_layers):
-                layer_type = layer.get('type')
-                params = {'__name__': fea_name}
+                layer_type = layer.get(C.CONFIG_FEATURE_LAYERS_TYPE)
+                params = {
+                    C.CONFIG_GLOBAL_FEATURE_NAME: fea_name,
+                    C.CONFIG_GLOBAL_TRAINING: self.training,
+                    C.CONFIG_GLOBAL_CONFIG: self.config
+                }
                 params.update(layer)
-                params['__config__'] = self.config
                 layer_fn = build_layer_fn(layer_type, params)
 
                 fea_tensor = layer_fn(fea_tensor, features)
@@ -49,13 +53,15 @@ class MatchNet(object):
     #     tf.nn.random_ops.random_uniform()
     #     pass
 
-    def user_embedding(self, features, training=False):
-        return self._emb_sum('user', features, training)
+    def user_embedding(self, features):
+        return self._emb_sum('user', features)
 
-    def item_embedding(self, features, training=False):
-        return self._emb_sum('item', features, training)
+    def item_embedding(self, features):
+        return self._emb_sum('item', features)
 
     def similarity(self, user_emb, item_emb):
+        tf.summary.histogram('user_emb', user_emb)
+        tf.summary.histogram('item_emb', item_emb)
         _similarity_params = self.config.get(C.CONFIG_SIMILARITY, {})
         _similarity_type = _similarity_params.get(C.CONFIG_SIMILARITY_TYPE)
         _similarity_fn = build_similarity_fn(_similarity_type, _similarity_params)

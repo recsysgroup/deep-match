@@ -14,8 +14,8 @@ def build_eval_fn(params):
 
         user_id = pos_features.get(C.CONFIG_INPUT_USER)
         item_id = pos_features.get(C.CONFIG_INPUT_ITEM)
-        user_emb = matchNet.user_embedding(pos_features, False)
-        item_emb = matchNet.item_embedding(pos_features, False)
+        user_emb = matchNet.user_embedding(pos_features)
+        item_emb = matchNet.item_embedding(pos_features)
 
         neg_features = features.get(C.CONFIG_INPUT_NEG_FEATURES)
         neg_item_id = neg_features.get(C.CONFIG_INPUT_ITEM)

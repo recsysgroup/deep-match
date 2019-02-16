@@ -1,8 +1,6 @@
 import tensorflow as tf
 
-
 def build_layer_fn(params):
-    name = params.get('__name__')
     fields = params.get('fields')
 
     def layer_fn(tensor, features):

@@ -1,8 +1,9 @@
 import tensorflow as tf
+import constant as C
 
 
 def build_layer_fn(params):
-    name = params.get('__name__')
+    name = params.get(C.CONFIG_GLOBAL_FEATURE_NAME)
     _min = params.get('min') + 0.0
     _max = params.get('max') + 0.0
     _size = params.get('size')
