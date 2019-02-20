@@ -4,10 +4,11 @@ import tensorflow as tf
 class LogviewMetricWriter(object):
     def __init__(self, summury_dir):
         self.writer = tf.summary.MetricsWriter('.')
-        self.tb_writer = tf.summary.MetricsWriter(summury_dir+'/my_evals')
+        self.tb_writer = tf.summary.MetricsWriter(summury_dir + '/my_evals')
 
     def add_scalar(self, _metric_values, _step):
         for k, v in _metric_values.items():
+            print('{0} is {1} at {2}'.format(k, v, _step))
             self.writer.add_scalar(k, v, _step)
             self.tb_writer.add_scalar(k, v, _step)
 

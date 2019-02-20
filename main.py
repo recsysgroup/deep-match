@@ -369,7 +369,7 @@ def main(_):
         model_dir=FLAGS.model_dir,
         session_config=session_config,
         distribute=distribution,
-        save_checkpoints_steps=10000,
+        save_checkpoints_steps=50000,
         keep_checkpoint_max=10,
     )
 
