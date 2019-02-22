@@ -32,6 +32,7 @@ class MatchNet(object):
 
             # fea_tensor = tf.layers.dropout(fea_tensor, rate=0.2, training=training)
 
+            tf.summary.histogram(fea_name, fea_tensor)
             emb_list.append(fea_tensor)
 
         _aggregator_params = self.config.get(C.CONFIG_AGGREGATORS, {}).get(name, {})

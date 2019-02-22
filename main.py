@@ -5,7 +5,7 @@ import numpy as np
 import json
 import constant as C
 from modeling import MatchNet
-from helper import LogviewMetricHook, LogviewMetricWriter, LogviewTrainHook
+from helper import LogviewMetricHook, LogviewMetricWriter, LogviewTrainHook, get_assignment_map_from_checkpoint
 from losses import build_loss_fn
 from evals import build_eval_fn
 
@@ -26,6 +26,7 @@ flags.DEFINE_string("eval_table", None, "")
 flags.DEFINE_string("input_table", None, "")
 flags.DEFINE_string("output_table", None, "")
 flags.DEFINE_string("tmp_dir", None, "")
+flags.DEFINE_string("init_checkpoint", None, "")
 flags.DEFINE_string("model_dir", None, "")
 flags.DEFINE_integer("train_batch_size", 128, "")
 flags.DEFINE_integer("eval_batch_size", 128, "")
@@ -262,13 +263,25 @@ def model_fn_builder(config):
 
     def model_fn(features, labels, mode, params):  # pylint: disable=unused-argument
 
-
         if mode == tf.estimator.ModeKeys.TRAIN:
             matchNet = MatchNet(config, True)
             _loss_params = config.get(C.CONFIG_LOSS)
             _loss_name = _loss_params.get(C.CONFIG_LOSS_NAME)
             loss_fn = build_loss_fn(_loss_name, _loss_params)
             _loss = loss_fn(matchNet, features)
+
+            if FLAGS.init_checkpoint:
+                tvars = tf.trainable_variables()
+                assignment_map, initialized_variable_names = get_assignment_map_from_checkpoint(tvars,
+                                                                                                FLAGS.init_checkpoint)
+                tf.train.init_from_checkpoint(FLAGS.init_checkpoint, assignment_map)
+                tf.logging.info("**** Trainable Variables ****")
+                for var in tvars:
+                    init_string = ""
+                    if var.name in initialized_variable_names:
+                        init_string = ", *INIT_FROM_CKPT*"
+                    tf.logging.info("  name = %s, shape = %s%s", var.name, var.shape,
+                                    init_string)
 
             global_step = tf.train.get_or_create_global_step()
             learning_rate = tf.constant(value=params["learning_rate"], shape=[], dtype=tf.float32)
