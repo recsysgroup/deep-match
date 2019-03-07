@@ -95,6 +95,7 @@ def main(_):
         except tf.errors.OutOfRangeError:
             pass
 
+    print('table : {0}, field : {1}, with size : {2}'.format(FLAGS.table, FLAGS.field, FLAGS.size))
     stat(id_2_cnt, id_2_hash)
 
 

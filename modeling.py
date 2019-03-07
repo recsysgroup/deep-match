@@ -21,6 +21,7 @@ class MatchNet(object):
             for index, layer in enumerate(fea_layers):
                 layer_type = layer.get(C.CONFIG_FEATURE_LAYERS_TYPE)
                 params = {
+                    C.CONFIG_GLOBAL_FEATURE_SIDE: '__{0}__'.format(name),
                     C.CONFIG_GLOBAL_FEATURE_NAME: fea_name,
                     C.CONFIG_GLOBAL_TRAINING: self.training,
                     C.CONFIG_GLOBAL_CONFIG: self.config
@@ -30,7 +31,7 @@ class MatchNet(object):
 
                 fea_tensor = layer_fn(fea_tensor, features)
 
-            # fea_tensor = tf.layers.dropout(fea_tensor, rate=0.2, training=training)
+            # fea_tensor = tf.layers.dropout(fea_tensor, rate=0.5, training=self.training)
 
             tf.summary.histogram(fea_name, fea_tensor)
             emb_list.append(fea_tensor)

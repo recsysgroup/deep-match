@@ -19,15 +19,17 @@ def build_loss_fn(params):
         tf.summary.histogram("bpr_neg_score", xuj)
         xuij = xui - xuj
 
-        l2_norm = tf.add_n([
-            regulation_rate * tf.reduce_sum(tf.multiply(user_emb, user_emb)),
-            regulation_rate * tf.reduce_sum(tf.multiply(item_emb, item_emb)),
-            regulation_rate * tf.reduce_sum(tf.multiply(neg_item_emb, neg_item_emb))
-        ])
+        # l2_norm = tf.add_n([
+        #     regulation_rate * tf.reduce_sum(tf.multiply(user_emb, user_emb)),
+        #     regulation_rate * tf.reduce_sum(tf.multiply(item_emb, item_emb)),
+        #     regulation_rate * tf.reduce_sum(tf.multiply(neg_item_emb, neg_item_emb))
+        # ])
 
-        bprloss = l2_norm - tf.reduce_mean(tf.log(tf.sigmoid(xuij)))  # BPR loss
-        bprloss += tf.losses.get_regularization_loss()
+        # bprloss = l2_norm - tf.reduce_mean(tf.log(tf.sigmoid(xuij)))  # BPR loss
+        bprloss = -tf.reduce_mean(tf.log(tf.sigmoid(xuij)))  # BPR loss
+        regloss = tf.losses.get_regularization_loss()
+        tf.summary.histogram("reg_loss", regloss)
 
-        return bprloss
+        return bprloss + regloss
 
     return loss_fn

@@ -286,14 +286,24 @@ def model_fn_builder(config):
             global_step = tf.train.get_or_create_global_step()
             learning_rate = tf.constant(value=params["learning_rate"], shape=[], dtype=tf.float32)
 
-            # Implements linear decay of the learning rate.
+            # # Implements linear decay of the learning rate.
+            # learning_rate = tf.train.polynomial_decay(
+            #     learning_rate,
+            #     global_step,
+            #     FLAGS.train_max_step,
+            #     end_learning_rate=0.0,
+            #     power=1.0,
+            #     cycle=False)
+
             learning_rate = tf.train.polynomial_decay(
                 learning_rate,
                 global_step,
-                FLAGS.train_max_step,
-                end_learning_rate=0.0,
+                1000,
+                end_learning_rate=1e-4,
                 power=1.0,
-                cycle=False)
+                cycle=True)
+
+            # learning_rate = tf.train.exponential_decay(learning_rate, global_step, 100, 0.99)
 
             opt = tf.train.AdamOptimizer(learning_rate)
             train_op = opt.minimize(_loss, global_step=tf.train.get_global_step())
@@ -413,7 +423,7 @@ def main(_):
         train_input_fn = train_input_fn_builder(config)
         eval_input_fn = eval_input_fn_builder(config)
         train_spec = tf.estimator.TrainSpec(input_fn=train_input_fn, max_steps=FLAGS.train_max_step)
-        eval_spec = tf.estimator.EvalSpec(input_fn=eval_input_fn)
+        eval_spec = tf.estimator.EvalSpec(input_fn=eval_input_fn, start_delay_secs=120, throttle_secs=60)
         tf.estimator.train_and_evaluate(estimator, train_spec, eval_spec)
 
     if FLAGS.task_type in (C.TASK_TYPE_USER_EMBEDDING, C.TASK_TYPE_ITEM_EMBEDDING):
