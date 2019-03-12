@@ -2,7 +2,7 @@
 
 export OSS_HOST=cn-hangzhou.oss-internal.aliyun-inc.com
 export ROLE_ARN=acs:ram::1384235136031533:role/jiusheng
-export CHECKPOINT_PATH=oss://jiusheng-tmp/onion_reduce_v1_20190310/model.ckpt-1000019
+export CHECKPOINT_PATH=oss://jiusheng-tmp/onion_reduce_v1_20190310
 #export SAVEDMODEL_PATH=oss://jiusheng-tmp/fm_model_exp_v16/savedmodel
 export SAVEDMODEL_PATH=hdfs://na61storage/pora/na61hunbu/pai_model/fm_model_exp_v16
 export DS=20190306

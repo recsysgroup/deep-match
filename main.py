@@ -429,7 +429,8 @@ def export_saved_model(config):
     with tf.Session() as sess:
         sess.run(init)
         sess.run(tf.local_variables_initializer())
-        saver.restore(sess, FLAGS.input_path)
+        print tf.train.latest_checkpoint(FLAGS.input_path)
+        saver.restore(sess, tf.train.latest_checkpoint(FLAGS.input_path))
         builder.add_meta_graph_and_variables(sess, [tf.saved_model.tag_constants.SERVING],
                                              signature_def_map={"signature": signature})
     builder.save()
