@@ -21,7 +21,7 @@
     {
       "name": "user:occupation",
       "type": "single"
-    },
+  },
     {
       "name": "user:zip_code",
       "type": "single"

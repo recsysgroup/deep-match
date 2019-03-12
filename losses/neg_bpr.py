@@ -3,7 +3,6 @@ import constant as C
 
 
 def build_loss_fn(params):
-    regulation_rate = params.get('l2', 0.0)
 
     def loss_fn(matchNet, features):
         pos_features = features.get(C.CONFIG_INPUT_POS_FEATURES)

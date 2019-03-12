@@ -2,6 +2,7 @@ TASK_TYPE_TRAIN = 'train'
 TASK_TYPE_PREDICT = 'predict'
 TASK_TYPE_USER_EMBEDDING = 'user_embedding'
 TASK_TYPE_ITEM_EMBEDDING = 'item_embedding'
+TASK_TYPE_USER_SAVE_MODEL = 'user_save_model'
 
 CONFIG_COLUMNS = 'columns'
 CONFIG_COLUMNS_NAME = 'name'

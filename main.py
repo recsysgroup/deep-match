@@ -44,6 +44,9 @@ flags.DEFINE_string("train_neg_table", None, "")
 flags.DEFINE_string("eval_neg_table", None, "")
 flags.DEFINE_string("task_type", None, "train,user_embedding,item_embedding,predict")
 flags.DEFINE_boolean("drop_out", True, "")
+flags.DEFINE_string("input_path", None, "")
+flags.DEFINE_string("output_path", None, "")
+flags.DEFINE_string("ds", None, "")
 
 logviewMetricWriter = LogviewMetricWriter(FLAGS.model_dir)
 
@@ -371,11 +374,65 @@ def model_fn_builder(config):
     return model_fn
 
 
-def metric_mrr(predicts, neg_size):
-    _, ranks = tf.nn.top_k(predicts, neg_size + 1)
-    true_rank = tf.slice(tf.where(tf.equal(ranks, 0)), [0, 1], [FLAGS.train_batch_size, 1])
-    mrr = tf.reduce_mean(1.0 / tf.to_float(true_rank + 1))
-    return mrr
+def export_saved_model(config):
+    matchNet = MatchNet(config, False)
+
+    features = {}
+    input_infos = {}
+    features['__user__'] = tf.placeholder(tf.string, shape=[None], name='user_bias')
+    input_infos['__user__'] = tf.saved_model.utils.build_tensor_info(features.get('__user__'))
+
+    for column in config.get(C.CONFIG_COLUMNS):
+        fea_side, fea_name = column.get(C.CONFIG_COLUMNS_NAME).split(':')
+        fea_type = column.get(C.CONFIG_COLUMNS_TYPE)
+
+        if fea_side == 'user':
+            if fea_type == C.CONFIG_COLUMNS_TYPE_SINGLE:
+                features[fea_name] = tf.placeholder(tf.string, shape=[None], name=fea_name)
+            elif fea_type == C.CONFIG_COLUMNS_TYPE_SEQ:
+                seq_len = column.get('seq_len')
+                features[fea_name] = tf.placeholder(tf.string, shape=[None, seq_len], name=fea_name)
+                features[fea_name + "_mask"] = tf.placeholder(tf.float32, shape=[None, seq_len],
+                                                              name=fea_name + '_mask')
+
+            input_infos[fea_name] = tf.saved_model.utils.build_tensor_info(features.get(fea_name))
+
+    user_emb = matchNet.user_embedding(features)
+
+    user_emb_output = tf.identity(user_emb, name="user_embedding")
+
+    signature = (
+        tf.saved_model.signature_def_utils.build_signature_def(
+            inputs=input_infos,
+            outputs={
+                "user_embedding":
+                    tf.saved_model.utils.build_tensor_info(
+                        user_emb_output)
+            },
+            method_name="embedding")
+    )
+
+    saver = tf.train.Saver()
+
+    version = 0
+    path = '{0}/{1}/data'.format(FLAGS.output_path, FLAGS.ds)
+    while tf.gfile.Exists(path):
+        version += 1
+        path = '{0}/{1}{2}/data'.format(FLAGS.output_path, FLAGS.ds, str(version))
+
+    print('export path : {0}'.format(path))
+
+    builder = tf.saved_model.builder.SavedModelBuilder(path)
+
+    init = tf.global_variables_initializer()
+
+    with tf.Session() as sess:
+        sess.run(init)
+        sess.run(tf.local_variables_initializer())
+        saver.restore(sess, FLAGS.input_path)
+        builder.add_meta_graph_and_variables(sess, [tf.saved_model.tag_constants.SERVING],
+                                             signature_def_map={"signature": signature})
+    builder.save()
 
 
 def main(_):
@@ -442,6 +499,9 @@ def main(_):
                 writer.write([result.get('__item__'), result.get('item_embedding')], [0, 1])
 
         writer.close()
+
+    if FLAGS.task_type in [C.TASK_TYPE_USER_SAVE_MODEL]:
+        export_saved_model(config)
 
 
 if __name__ == "__main__":
