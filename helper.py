@@ -40,32 +40,33 @@ class LogviewMetricHook(tf.train.SessionRunHook):
 
 
 class LogviewTrainHook(tf.train.SessionRunHook):
-    def __init__(self, _loss_op, _learning_rate, _step_op, _logviewMetricWriter):
-        self._loss_op = _loss_op
-        self._learning_rate = _learning_rate
+    def __init__(self, _metric_ops, _step_op, _logviewMetricWriter):
         self._step_op = _step_op
+        self._metric_ops = {}
         self._logviewMetricWriter = _logviewMetricWriter
+        for k, v in _metric_ops.items():
+            self._metric_ops[k] = v
         self.cnt = 0
 
     def before_run(self, run_context):
-        tensors = {
-            'train_loss': self._loss_op,
-            'learning_rate': self._learning_rate,
-            'step': self._step_op
-        }
+        tensors = [self._metric_ops, self._step_op]
         return tf.train.SessionRunArgs(tensors)
 
     def after_run(self,
                   run_context,
                   run_values):
-        if self.cnt % 100 == 0:
-            results = run_values.results
-            _metrics = {
-                'train_loss': results.get('train_loss'),
-                'learning_rate': results.get('learning_rate'),
-            }
-            _step = results.get('step')
-            self._logviewMetricWriter.add_scalar(_metrics, _step)
+        if self.cnt % 10 == 0:
+            _metric_values, _step = run_values.results
+            for k, v in _metric_values.items():
+                if type(v) is tuple:
+                    _metric_values[k] = v[1]
+                elif type(v) is dict:
+                    for name, val in v.items():
+                        _metric_values[name] = val
+                    del _metric_values[k]
+
+            for k, v in _metric_values.items():
+                print('{0} is {1} at {2}'.format(k, v, _step))
 
         self.cnt += 1
 

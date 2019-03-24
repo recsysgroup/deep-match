@@ -47,4 +47,6 @@ CONFIG_GLOBAL_CONFIG = '__config__'
 CONFIG_GLOBAL_FEATURE_NAME = '__feature_name__'
 CONFIG_GLOBAL_FEATURE_SIDE = '__feature_side__'
 
+CONFIG_SAVE_CHECKPOINTS_STEPS = 'save_checkpoints_steps'
+
 NUM_PARALLEL_CALLS = 96

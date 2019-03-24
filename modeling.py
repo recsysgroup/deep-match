@@ -38,6 +38,7 @@ class MatchNet(object):
 
         _aggregator_params = self.config.get(C.CONFIG_AGGREGATORS, {}).get(name, {})
         _aggregator_params['__name__'] = name
+        _aggregator_params[C.CONFIG_GLOBAL_FEATURE_SIDE] = '__{0}__'.format(name)
         _aggregator_type = _aggregator_params.get(C.CONFIG_AGGREGATORS_TYPE)
         aggregator_fn = build_aggregator_fn(_aggregator_type, _aggregator_params)
 

@@ -3,6 +3,7 @@ import constant as C
 
 
 def build_loss_fn(params):
+    l2 = params.get('l2', 0.0)
 
     def loss_fn(matchNet, features):
         pos_features = features.get(C.CONFIG_INPUT_POS_FEATURES)
@@ -18,15 +19,9 @@ def build_loss_fn(params):
         tf.summary.histogram("bpr_neg_score", xuj)
         xuij = xui - xuj
 
-        # l2_norm = tf.add_n([
-        #     regulation_rate * tf.reduce_sum(tf.multiply(user_emb, user_emb)),
-        #     regulation_rate * tf.reduce_sum(tf.multiply(item_emb, item_emb)),
-        #     regulation_rate * tf.reduce_sum(tf.multiply(neg_item_emb, neg_item_emb))
-        # ])
-
-        # bprloss = l2_norm - tf.reduce_mean(tf.log(tf.sigmoid(xuij)))  # BPR loss
-        bprloss = -tf.reduce_mean(tf.log(tf.sigmoid(xuij)))  # BPR loss
-        regloss = tf.losses.get_regularization_loss()
+        bprloss = -tf.reduce_mean(tf.log(tf.sigmoid(xuij) + 1e-7))  # BPR loss
+        regularizer = tf.contrib.layers.l2_regularizer(l2)
+        regloss = tf.contrib.layers.apply_regularization(regularizer)
         tf.summary.histogram("reg_loss", regloss)
 
         return bprloss + regloss

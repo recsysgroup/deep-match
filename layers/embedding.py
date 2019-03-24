@@ -16,6 +16,8 @@ def build_layer_fn(params):
                                     initializer=tf.truncated_normal_initializer(stddev=stddev))
 
     def layer_fn(tensor, features):
-        return tf.nn.embedding_lookup(embedding, tensor, name=name + '_lookup')
+        emb = tf.nn.embedding_lookup(embedding, tensor, name=name + '_lookup')
+        tf.add_to_collection(tf.GraphKeys.WEIGHTS, emb)
+        return emb
 
     return layer_fn
