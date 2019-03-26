@@ -150,12 +150,17 @@ def table_dataset_and_decode_builder(table, config, extra_fields=[],
 
 def predict_input_fn_builder(table, config):
     def input_fn():
+        dataset = None
+        decode = None
         if FLAGS.task_type == C.TASK_TYPE_ITEM_EMBEDDING:
             dataset, decode = table_dataset_and_decode_builder(table, config,
                                                                fea_sides=['item'])
         elif FLAGS.task_type == C.TASK_TYPE_USER_EMBEDDING:
             dataset, decode = table_dataset_and_decode_builder(table, config,
                                                                fea_sides=['user'])
+        elif FLAGS.task_type == C.TASK_TYPE_PREDICT:
+            dataset, decode = table_dataset_and_decode_builder(table, config, [('label', 0)])
+
 
         dataset = dataset.repeat(1)
         dataset = dataset.map(decode, num_parallel_calls=C.NUM_PARALLEL_CALLS)
@@ -360,7 +365,18 @@ def model_fn_builder(config):
                 item_embedding = tf.reduce_join(tf.as_string(item_embedding, precision=5), 1, separator=',')
                 predictions['item_embedding'] = item_embedding
             elif predict_type == C.TASK_TYPE_PREDICT:
-                pass
+                predictions['__user__'] = features.get('__user__')
+                predictions['__item__'] = features.get('__item__')
+                if features.get('label') is not None:
+                    predictions['label'] = features.get('label')
+                user_embedding = matchNet.user_embedding(features)
+                item_embedding = matchNet.item_embedding(features)
+                score = matchNet.similarity(user_embedding, item_embedding)
+                predictions['score'] = score
+                user_embedding = tf.reduce_join(tf.as_string(user_embedding, precision=5), 1, separator=',')
+                predictions['user_embedding'] = user_embedding
+                item_embedding = tf.reduce_join(tf.as_string(item_embedding, precision=5), 1, separator=',')
+                predictions['item_embedding'] = item_embedding
 
             output_spec = tf.estimator.EstimatorSpec(
                 mode=mode, predictions=predictions)
@@ -480,7 +496,7 @@ def main(_):
         eval_spec = tf.estimator.EvalSpec(input_fn=eval_input_fn, start_delay_secs=120, throttle_secs=60)
         tf.estimator.train_and_evaluate(estimator, train_spec, eval_spec)
 
-    if FLAGS.task_type in (C.TASK_TYPE_USER_EMBEDDING, C.TASK_TYPE_ITEM_EMBEDDING):
+    if FLAGS.task_type in (C.TASK_TYPE_USER_EMBEDDING, C.TASK_TYPE_ITEM_EMBEDDING, C.TASK_TYPE_PREDICT):
         predict_input_fn = predict_input_fn_builder(FLAGS.input_table, config)
 
         writer = tf.python_io.TableWriter(FLAGS.output_table, slice_id=FLAGS.task_index)
@@ -494,6 +510,17 @@ def main(_):
                 writer.write([result.get('__user__'), result.get('user_embedding')], [0, 1])
             elif FLAGS.task_type == C.TASK_TYPE_ITEM_EMBEDDING:
                 writer.write([result.get('__item__'), result.get('item_embedding')], [0, 1])
+            elif FLAGS.task_type == C.TASK_TYPE_PREDICT:
+                write_record = []
+                write_record.append(result.get('__user__'))
+                write_record.append(result.get('__item__'))
+                write_record.append(result.get('user_embedding'))
+                write_record.append(result.get('item_embedding'))
+                write_record.append(result.get('score'))
+                if 'label' in result:
+                    write_record.append(result.get('label'))
+
+                writer.write(write_record, [i for i in range(len(write_record))])
 
         writer.close()
 

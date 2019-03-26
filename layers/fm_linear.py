@@ -16,7 +16,6 @@ def build_layer_fn(params):
     with tf.variable_scope(name, reuse=tf.AUTO_REUSE):
         if need_bias:
             bias = tf.get_variable('bias', shape=[1], initializer=tf.constant_initializer(0.01))
-            bias = tf.Print(bias, [bias])
 
         for fea in _features:
             fea_name = fea.get('name')
