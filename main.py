@@ -61,7 +61,7 @@ def parse_seq_str_op(text, max_seq_len):
             vals.append(parts[i])
             mask.append(1.0)
 
-        vals = vals + ['0'] * (max_seq_len - len(vals))
+        vals = vals + [''] * (max_seq_len - len(vals))
         mask = mask + [0.0] * (max_seq_len - len(mask))
 
         return vals, mask
@@ -160,7 +160,6 @@ def predict_input_fn_builder(table, config):
                                                                fea_sides=['user'])
         elif FLAGS.task_type == C.TASK_TYPE_PREDICT:
             dataset, decode = table_dataset_and_decode_builder(table, config, [('label', 0)])
-
 
         dataset = dataset.repeat(1)
         dataset = dataset.map(decode, num_parallel_calls=C.NUM_PARALLEL_CALLS)
