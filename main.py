@@ -161,6 +161,9 @@ def predict_input_fn_builder(table, config):
         elif FLAGS.task_type == C.TASK_TYPE_PREDICT:
             dataset, decode = table_dataset_and_decode_builder(table, config, [('label', 0)])
 
+        elif FLAGS.task_type == C.TASK_TYPE_DEBUG:
+            dataset, decode = table_dataset_and_decode_builder(table, config)
+
         dataset = dataset.repeat(1)
         dataset = dataset.map(decode, num_parallel_calls=C.NUM_PARALLEL_CALLS)
         dataset = dataset.batch(batch_size=FLAGS.predict_batch_size)
@@ -306,11 +309,11 @@ def model_fn_builder(config):
 
             eval_metric_ops = {}
 
-            for _eval in config.get(C.CONFIG_EVALS):
-                _eval_name = _eval.get(C.CONFIG_EVALS_NAME)
-                eval_fn = build_eval_fn(_eval_name, _eval)
-                _metric = eval_fn(matchNet, features)
-                eval_metric_ops[_eval_name] = _metric
+            # for _eval in config.get(C.CONFIG_EVALS):
+            #     _eval_name = _eval.get(C.CONFIG_EVALS_NAME)
+            #     eval_fn = build_eval_fn(_eval_name, _eval)
+            #     _metric = eval_fn(matchNet, features)
+            #     eval_metric_ops[_eval_name] = _metric
 
             output_spec = tf.estimator.EstimatorSpec(
                 mode=mode,
@@ -376,6 +379,12 @@ def model_fn_builder(config):
                 predictions['user_embedding'] = user_embedding
                 item_embedding = tf.reduce_join(tf.as_string(item_embedding, precision=5), 1, separator=',')
                 predictions['item_embedding'] = item_embedding
+            elif predict_type == C.TASK_TYPE_DEBUG:
+                predictions['__user__'] = features.get('__user__')
+                predictions['__item__'] = features.get('__item__')
+                name2layer = matchNet.layers_embedding(features)
+                for k, v in name2layer.items():
+                    predictions[k] = tf.reduce_join(tf.as_string(v, precision=5), 1, separator=',')
 
             output_spec = tf.estimator.EstimatorSpec(
                 mode=mode, predictions=predictions)
@@ -495,7 +504,8 @@ def main(_):
         eval_spec = tf.estimator.EvalSpec(input_fn=eval_input_fn, start_delay_secs=120, throttle_secs=60)
         tf.estimator.train_and_evaluate(estimator, train_spec, eval_spec)
 
-    if FLAGS.task_type in (C.TASK_TYPE_USER_EMBEDDING, C.TASK_TYPE_ITEM_EMBEDDING, C.TASK_TYPE_PREDICT):
+    if FLAGS.task_type in (
+            C.TASK_TYPE_USER_EMBEDDING, C.TASK_TYPE_ITEM_EMBEDDING, C.TASK_TYPE_PREDICT, C.TASK_TYPE_DEBUG):
         predict_input_fn = predict_input_fn_builder(FLAGS.input_table, config)
 
         writer = tf.python_io.TableWriter(FLAGS.output_table, slice_id=FLAGS.task_index)
@@ -520,6 +530,16 @@ def main(_):
                     write_record.append(result.get('label'))
 
                 writer.write(write_record, [i for i in range(len(write_record))])
+            elif FLAGS.task_type == C.TASK_TYPE_DEBUG:
+                write_record = []
+                write_record.append(result.get('__user__'))
+                write_record.append(result.get('__item__'))
+                str_buf = ''
+                for k, v in result.items():
+                    if k not in ['__user__', '__item__']:
+                        str_buf += '{0}={1}&'.format(k, v)
+                write_record.append(str_buf)
+                writer.write(write_record, [0, 1, 2])
 
         writer.close()
 

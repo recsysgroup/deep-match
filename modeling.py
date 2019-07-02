@@ -69,3 +69,26 @@ class MatchNet(object):
         _similarity_type = _similarity_params.get(C.CONFIG_SIMILARITY_TYPE)
         _similarity_fn = build_similarity_fn(_similarity_type, _similarity_params)
         return _similarity_fn(user_emb, item_emb)
+
+    def layers_embedding(self, features):
+        name_2_emb = {}
+        for fea in self.config.get('user') + self.config.get('item'):
+            fea_name = fea.get(C.CONFIG_FEATURE_NAME)
+            fea_layers = fea.get(C.CONFIG_FEATURE_LAYERS)
+
+            fea_tensor = features.get(fea_name)
+
+            for index, layer in enumerate(fea_layers):
+                layer_type = layer.get(C.CONFIG_FEATURE_LAYERS_TYPE)
+                params = {
+                    C.CONFIG_GLOBAL_FEATURE_NAME: fea_name,
+                    C.CONFIG_GLOBAL_TRAINING: self.training,
+                    C.CONFIG_GLOBAL_CONFIG: self.config
+                }
+                params.update(layer)
+                layer_fn = build_layer_fn(layer_type, params)
+
+                fea_tensor = layer_fn(fea_tensor, features)
+
+            name_2_emb[fea_name] = fea_tensor
+        return name_2_emb
