@@ -10,13 +10,13 @@ class MatchNet(object):
         self.config = config
         self.training = training
 
-    def _emb_sum(self, name, features):
+    def _emb_sum(self, name, features, prefix=''):
         emb_list = []
         for fea in self.config.get(name):
             fea_name = fea.get(C.CONFIG_FEATURE_NAME)
             fea_layers = fea.get(C.CONFIG_FEATURE_LAYERS)
 
-            fea_tensor = features.get(fea_name)
+            fea_tensor = features.get(prefix + fea_name)
 
             for index, layer in enumerate(fea_layers):
                 layer_type = layer.get(C.CONFIG_FEATURE_LAYERS_TYPE)
@@ -61,6 +61,9 @@ class MatchNet(object):
 
     def item_embedding(self, features):
         return self._emb_sum('item', features)
+
+    def neg_item_embedding(self, features):
+        return self._emb_sum('item', features, 'neg__')
 
     def similarity(self, user_emb, item_emb):
         tf.summary.histogram('user_emb', user_emb)
