@@ -7,14 +7,10 @@ def build_loss_fn(params):
 
     def loss_fn(matchNet, features):
         pair_features = features.get(C.CONFIG_INPUT_PAIR_FEATURES)
-        print pair_features
 
         user_emb = matchNet.user_embedding(pair_features)
-        print '###', user_emb
         item_emb = matchNet.item_embedding(pair_features)
-        print '###', item_emb
         neg_item_emb = matchNet.neg_item_embedding(pair_features)
-        print '###', neg_item_emb
 
         xui = matchNet.similarity(user_emb, item_emb)
         xuj = matchNet.similarity(user_emb, neg_item_emb)
