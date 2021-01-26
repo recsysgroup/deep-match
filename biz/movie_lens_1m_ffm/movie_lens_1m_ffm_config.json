@@ -1,0 +1,128 @@
+{
+  "embedding_size": 64,
+  "train_batch_size": 128,
+  "train_neg_size": 128,
+  "eval_point_size": 100000,
+  "eval_pos_size": 1000,
+  "eval_neg_size": 1000,
+  "save_checkpoints_steps": 1000,
+  "learning_rate": 1,
+  "optimizer": "adagrad_optimizer",
+  "columns": [
+    {
+      "name": "user:user_id",
+      "type": "single"
+    },
+    {
+      "name": "item:item_id",
+      "type": "single"
+    },
+    {
+      "name": "user:gender",
+      "type": "single"
+    },
+    {
+      "name": "user:age",
+      "type": "single"
+    },
+    {
+      "name": "user:occupation",
+      "type": "single"
+    },
+    {
+      "name": "user:zip_code",
+      "type": "single"
+    },
+    {
+      "name": "item:title",
+      "type": "single"
+    },
+    {
+      "name": "item:genres",
+      "type": "seq",
+      "seq_len": 10,
+      "need_mask": true
+    }
+  ],
+  "loss": {
+    "name": "in_batch_sampled_softmax",
+    "l2": 1e-6
+  },
+  "evals": [
+    {
+      "name": "hr",
+      "topk": [
+        100
+      ]
+    }
+  ],
+  "user": {
+    "policy_network": "ffm_network",
+    "fields": [
+      {
+        "field_name": "fu1",
+        "embedding_size": 2,
+        "features": [
+          {
+            "name": "user_id",
+            "bucket_size": 100000
+          }
+        ]
+      },
+      {
+        "field_name": "fu2",
+        "embedding_size": 2,
+        "features": [
+          {
+            "name": "gender",
+            "bucket_size": 100
+          },
+          {
+            "name": "age",
+            "bucket_size": 1000
+          }
+        ]
+      },
+      {
+        "field_name": "fu3",
+        "embedding_size": 2,
+        "features": [
+          {
+            "name": "occupation",
+            "bucket_size": 100000
+          },
+          {
+            "name": "zip_code",
+            "bucket_size": 100000
+          }
+        ]
+      }
+    ]
+  },
+  "item": {
+    "policy_network": "ffm_network",
+    "fields": [
+      {
+        "field_name": "fi1",
+        "embedding_size": 2,
+        "features": [
+          {
+            "name": "item_id",
+            "bucket_size": 100000
+          }
+        ]
+      },
+      {
+        "field_name": "fi2",
+        "embedding_size": 2,
+        "features": [
+          {
+            "name": "genres",
+            "bucket_size": 10000,
+            "pooling": "avg_pooling"
+          }
+        ]
+      }
+    ]
+  }
+}

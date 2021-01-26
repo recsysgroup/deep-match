@@ -56,20 +56,18 @@ logviewMetricWriter = LogviewMetricWriter(FLAGS.model_dir)
 def parse_seq_str_op(text, max_seq_len):
     def user_func(text):
         vals = []
-        mask = []
-        parts = text.split(',')
+        parts = text.split('\x1D')
         for i in range(min(len(parts), max_seq_len)):
             vals.append(parts[i])
-            mask.append(1.0)
 
+        mask = np.int32(len(vals))
         vals = vals + [''] * (max_seq_len - len(vals))
-        mask = mask + [0.0] * (max_seq_len - len(mask))
 
         return vals, mask
 
-    y = tf.py_func(user_func, [text], [tf.string, tf.double])
+    y = tf.py_func(user_func, [text], [tf.string, tf.int32])
     y[0].set_shape((max_seq_len))
-    y[1].set_shape((max_seq_len))
+    y[1].set_shape(())
     return y
 
 
@@ -77,7 +75,7 @@ def parse_dense_str_op(text, max_len):
     def user_func(text):
         vals = []
         if text != '':
-            parts = text.split(',')
+            parts = text.split(':')
             for i in range(min(len(parts), max_len)):
                 vals.append(float(parts[i]))
 
@@ -88,6 +86,76 @@ def parse_dense_str_op(text, max_len):
     y = tf.py_func(user_func, [text], tf.float32)
     y.set_shape((max_len))
     return y
+
+
+def parse_seq_dense_str_op(text, max_seq_len, dim):
+    def user_func(text):
+        vals = []
+        parts = [i for i in text.split(',')]
+
+        for i in range(min(len(parts), max_seq_len)):
+            feas = [float(o) for o in parts[i].split(':')]
+            vals.append(feas)
+
+        mask = len(vals)
+        for i in range(max_seq_len - len(vals)):
+            vals.append([0 for i in range(dim)])
+
+        return np.array(vals, dtype=np.float32), mask
+
+    y = tf.py_func(user_func, [text], [tf.float32, tf.int32])
+    y[0].set_shape((max_seq_len, dim))
+    y[1].set_shape(())
+    return y
+
+
+def text_dataset_and_decode_builder(table, config, mode='train'):
+    columns = []
+
+    for column in config.get(C.CONFIG_COLUMNS):
+        exclude = column.get('exclude')
+        if exclude and mode in exclude:
+            continue
+        col_side, col_name = column.get(C.CONFIG_COLUMNS_NAME).split(':')
+        col_type = column.get(C.CONFIG_COLUMNS_TYPE)
+        columns.append((col_name, col_type, column))
+
+    record_defaults = []
+    selected_cols = []
+    colname_2_index = {}
+
+    for column in columns:
+        record_defaults.append('')
+        selected_cols.append(column[0])
+        colname_2_index[column[0]] = len(colname_2_index)
+
+    def _decode_record(text):
+
+        line = tf.decode_csv(text, [[""] for _ in range(len(columns))], field_delim='\x01')
+
+        ret_dict = {}
+
+        for name, type, col in columns:
+            if type == C.CONFIG_COLUMNS_TYPE_SINGLE:
+                ret_dict[name] = line[colname_2_index.get(name)]
+            elif type == C.CONFIG_COLUMNS_TYPE_SEQ:
+                _value, _mask = parse_seq_str_op(line[colname_2_index.get(name)], col.get('seq_len'))
+                ret_dict[name] = _value
+                if col.get('need_mask'):
+                    ret_dict[name + '_mask'] = _mask
+            elif type == C.CONFIG_COLUMNS_TYPE_SEQ_DENSE:
+                _value, _mask = parse_seq_dense_str_op(line[colname_2_index.get(name)], col.get('seq_len'),
+                                                       col.get('dim'))
+                ret_dict[name] = _value
+                if col.get('need_mask'):
+                    ret_dict[name + '_mask'] = _mask
+
+        return ret_dict
+
+    tf.logging.info("read table [{0}], record_defaults is {1}, selected_cols is {2}".format(table, str(record_defaults),
+                                                                                            str(selected_cols)))
+    d = tf.data.TextLineDataset([table])
+    return d, _decode_record
 
 
 def table_dataset_and_decode_builder(table, config, extra_fields=[],
@@ -187,18 +255,14 @@ def eval_input_fn_builder(config):
     def input_fn():
         _zip = {}
         if FLAGS.eval_table:
-            rank_dataset, rank_decode = table_dataset_and_decode_builder(FLAGS.eval_table, config,
-                                                                         extra_fields=[('label', 0)], slice_id=0,
-                                                                         slice_count=1)
+            rank_dataset, rank_decode = text_dataset_and_decode_builder(FLAGS.eval_table, config)
             rank_dataset = rank_dataset.repeat(1)
             rank_dataset = rank_dataset.map(rank_decode, num_parallel_calls=C.NUM_PARALLEL_CALLS)
             rank_dataset = rank_dataset.batch(batch_size=config.get(C.CONFIG_EVAL_POINT_SIZE))
             _zip[C.CONFIG_INPUT_POINT_FEATURES] = rank_dataset
 
         if FLAGS.eval_pos_table:
-            match_dataset, match_decode = table_dataset_and_decode_builder(FLAGS.eval_pos_table, config,
-                                                                           slice_id=0,
-                                                                           slice_count=1)
+            match_dataset, match_decode = text_dataset_and_decode_builder(FLAGS.eval_pos_table, config)
             match_dataset = match_dataset.repeat(1)
             match_dataset = match_dataset.map(match_decode, num_parallel_calls=C.NUM_PARALLEL_CALLS)
             match_dataset = match_dataset.batch(batch_size=config.get(C.CONFIG_EVAL_POS_SIZE))
@@ -223,7 +287,7 @@ def train_input_fn_builder(config):
         _zip = {}
 
         if FLAGS.train_table:
-            rank_dataset, rank_decode = table_dataset_and_decode_builder(FLAGS.train_table, config, [('label', 0)])
+            rank_dataset, rank_decode = text_dataset_and_decode_builder(FLAGS.train_table, config)
             rank_dataset = rank_dataset.repeat()
             rank_dataset = rank_dataset.shuffle(buffer_size=100000)
             rank_dataset = rank_dataset.map(rank_decode, num_parallel_calls=C.NUM_PARALLEL_CALLS)
@@ -232,7 +296,7 @@ def train_input_fn_builder(config):
             _zip[C.CONFIG_INPUT_POINT_FEATURES] = rank_dataset
 
         if FLAGS.train_pos_table:
-            match_dataset, match_decode = table_dataset_and_decode_builder(FLAGS.train_pos_table, config)
+            match_dataset, match_decode = text_dataset_and_decode_builder(FLAGS.train_pos_table, config)
             match_dataset = match_dataset.repeat()
             match_dataset = match_dataset.shuffle(buffer_size=100000)
             match_dataset = match_dataset.map(match_decode, num_parallel_calls=C.NUM_PARALLEL_CALLS)
@@ -240,26 +304,26 @@ def train_input_fn_builder(config):
             match_dataset = match_dataset.prefetch(buffer_size=config.get(C.CONFIG_TRAIN_BATCH_SIZE))
             _zip[C.CONFIG_INPUT_POS_FEATURES] = match_dataset
 
-        if FLAGS.train_neg_table:
-            neg_dataset, neg_decode = table_dataset_and_decode_builder(FLAGS.train_neg_table, config,
-                                                                       fea_sides=['item'],
-                                                                       slice_id=0, slice_count=1, )
-            neg_dataset = neg_dataset.repeat()
-            neg_dataset = neg_dataset.shuffle(buffer_size=100000)
-            neg_dataset = neg_dataset.map(neg_decode, num_parallel_calls=C.NUM_PARALLEL_CALLS)
-            neg_dataset = neg_dataset.batch(batch_size=config.get(C.CONFIG_TRAIN_NEG_SIZE))
-            neg_dataset = neg_dataset.prefetch(buffer_size=config.get(C.CONFIG_TRAIN_NEG_SIZE))
-            _zip[C.CONFIG_INPUT_NEG_FEATURES] = neg_dataset
-
-        if FLAGS.train_pair_table:
-            pair_dataset, pair_decode = table_dataset_and_decode_builder(FLAGS.train_pair_table, config,
-                                                                            fea_sides=['user', 'item', 'neg_item'])
-            pair_dataset = pair_dataset.repeat()
-            pair_dataset = pair_dataset.shuffle(buffer_size=100000)
-            pair_dataset = pair_dataset.map(pair_decode, num_parallel_calls=C.NUM_PARALLEL_CALLS)
-            pair_dataset = pair_dataset.batch(batch_size=config.get(C.CONFIG_TRAIN_BATCH_SIZE))
-            pair_dataset = pair_dataset.prefetch(buffer_size=config.get(C.CONFIG_TRAIN_BATCH_SIZE))
-            _zip[C.CONFIG_INPUT_PAIR_FEATURES] = pair_dataset
+        # if FLAGS.train_neg_table:
+        #     neg_dataset, neg_decode = text_dataset_and_decode_builder(FLAGS.train_neg_table, config,
+        #                                                                fea_sides=['item'],
+        #                                                                slice_id=0, slice_count=1, )
+        #     neg_dataset = neg_dataset.repeat()
+        #     neg_dataset = neg_dataset.shuffle(buffer_size=100000)
+        #     neg_dataset = neg_dataset.map(neg_decode, num_parallel_calls=C.NUM_PARALLEL_CALLS)
+        #     neg_dataset = neg_dataset.batch(batch_size=config.get(C.CONFIG_TRAIN_NEG_SIZE))
+        #     neg_dataset = neg_dataset.prefetch(buffer_size=config.get(C.CONFIG_TRAIN_NEG_SIZE))
+        #     _zip[C.CONFIG_INPUT_NEG_FEATURES] = neg_dataset
+        #
+        # if FLAGS.train_pair_table:
+        #     pair_dataset, pair_decode = text_dataset_and_decode_builder(FLAGS.train_pair_table, config,
+        #                                                                     fea_sides=['user', 'item', 'neg_item'])
+        #     pair_dataset = pair_dataset.repeat()
+        #     pair_dataset = pair_dataset.shuffle(buffer_size=100000)
+        #     pair_dataset = pair_dataset.map(pair_decode, num_parallel_calls=C.NUM_PARALLEL_CALLS)
+        #     pair_dataset = pair_dataset.batch(batch_size=config.get(C.CONFIG_TRAIN_BATCH_SIZE))
+        #     pair_dataset = pair_dataset.prefetch(buffer_size=config.get(C.CONFIG_TRAIN_BATCH_SIZE))
+        #     _zip[C.CONFIG_INPUT_PAIR_FEATURES] = pair_dataset
 
         return tf.data.Dataset.zip(_zip)
 
@@ -271,9 +335,7 @@ def model_fn_builder(config):
 
         if mode == tf.estimator.ModeKeys.TRAIN:
             matchNet = MatchNet(config, True)
-            _loss_params = config.get(C.CONFIG_LOSS)
-            _loss_name = _loss_params.get(C.CONFIG_LOSS_NAME)
-            loss_fn = build_loss_fn(_loss_name, _loss_params)
+            loss_fn = build_loss_fn(config)
             _loss = loss_fn(matchNet, features)
 
             if FLAGS.init_checkpoint:
@@ -290,49 +352,15 @@ def model_fn_builder(config):
                                     init_string)
 
             global_step = tf.train.get_or_create_global_step()
-            learning_rate = tf.constant(value=params["learning_rate"], shape=[], dtype=tf.float32)
 
-            # Implements linear decay of the learning rate.
-            learning_rate = tf.train.polynomial_decay(
-                learning_rate,
-                global_step,
-                FLAGS.train_max_step,
-                end_learning_rate=0.0,
-                power=1.0,
-                cycle=False)
-
-            # learning_rate = tf.train.polynomial_decay(
-            #     learning_rate,
-            #     global_step,
-            #     1000,
-            #     end_learning_rate=1e-4,
-            #     power=1.0,
-            #     cycle=True)
-
-            # learning_rate = tf.train.exponential_decay(learning_rate, global_step, 100, 0.99)
-
-            optimizer_name = config.get("optimizer", {"name": "sgd"}).get('name')
-            opt = None
-            if optimizer_name == 'sgd':
-                opt = tf.train.GradientDescentOptimizer(learning_rate)
-            elif optimizer_name == 'adam':
-                opt = tf.train.AdamOptimizer(learning_rate)
-            elif optimizer_name == 'adagrad':
-                opt = tf.train.AdagradOptimizer(learning_rate)
-            elif optimizer_name == 'ftrl':
-                opt = tf.train.FtrlOptimizer(learning_rate)
+            from optimizer import build_optimizer_fn
+            optimizer_fn = build_optimizer_fn(config)
+            opt = optimizer_fn(config, FLAGS.train_max_step)
 
             train_op = opt.minimize(_loss, global_step=tf.train.get_global_step())
             # hook = tf.train.ProfilerHook(save_steps=10000, output_dir=FLAGS.tmp_dir)
-            tf.summary.scalar('learning_rate', learning_rate)
 
             eval_metric_ops = {}
-
-            # for _eval in config.get(C.CONFIG_EVALS):
-            #     _eval_name = _eval.get(C.CONFIG_EVALS_NAME)
-            #     eval_fn = build_eval_fn(_eval_name, _eval)
-            #     _metric = eval_fn(matchNet, features)
-            #     eval_metric_ops[_eval_name] = _metric
 
             output_spec = tf.estimator.EstimatorSpec(
                 mode=mode,
@@ -478,17 +506,17 @@ def export_saved_model(config):
 def main(_):
     with open(FLAGS.config, 'r') as f:
         config = json.load(f)
+        if FLAGS.config.split('/')[1] == 'biz':
+            config[C.BIZ_NAME] = FLAGS.config.split('/')[2]
 
     model_fn = model_fn_builder(config)
 
     session_config = tf.ConfigProto(allow_soft_placement=True)
-    distribution = tf.contrib.distribute.ParameterServerStrategy(num_gpus_per_worker=1)
     # distribution = tf.contrib.distribute.MirroredStrategy(num_gpus=4)
 
     run_config = tf.estimator.RunConfig(
         model_dir=FLAGS.model_dir,
         session_config=session_config,
-        distribute=distribution,
         save_checkpoints_steps=config.get(C.CONFIG_SAVE_CHECKPOINTS_STEPS, 50000),
         keep_checkpoint_max=10,
     )

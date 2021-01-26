@@ -5,17 +5,14 @@ import re
 
 class LogviewMetricWriter(object):
     def __init__(self, summury_dir):
-        self.writer = tf.summary.MetricsWriter('.')
-        self.tb_writer = tf.summary.MetricsWriter(summury_dir + '/my_evals')
+        pass
 
     def add_scalar(self, _metric_values, _step):
         for k, v in _metric_values.items():
             print('{0} is {1} at {2}'.format(k, v, _step))
-            self.writer.add_scalar(k, v, _step)
-            self.tb_writer.add_scalar(k, v, _step)
 
     def __del__(self):
-        self.writer.close()
+        pass
 
 
 class LogviewMetricHook(tf.train.SessionRunHook):
@@ -116,3 +113,18 @@ def get_assignment_map_from_checkpoint(tvars, init_checkpoint):
         initialized_variable_names[name + ":0"] = 1
 
     return (assignment_map, initialized_variable_names)
+
+def pooling(fea, features, name2columns, emb):
+    fea_name = fea.get('name')
+    if fea.get('pooling', '') == 'sum_pooling':
+        column_info = name2columns.get(fea.get('name'))
+        seq_mask = tf.expand_dims(
+            tf.sequence_mask(features.get(fea_name + '_mask'), column_info.get('seq_len'),
+                             dtype=tf.float32), axis=-1)
+        emb = emb * seq_mask
+        emb = tf.reduce_sum(emb, axis=1)
+        return emb
+    elif fea.get('pooling', '') == 'avg_pooling':
+        pass
+
+    return emb
