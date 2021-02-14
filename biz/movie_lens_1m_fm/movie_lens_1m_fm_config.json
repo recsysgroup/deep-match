@@ -116,7 +116,7 @@
       "order_1": [
         {
           "name": "item_id",
-          "bucket_size": 100
+          "bucket_size": 10000
         }
       ],
       "order_2": [

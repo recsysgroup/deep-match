@@ -58,6 +58,28 @@
   ],
   "user": {
     "policy_network": "ffm_network",
+    "order_1": [
+      {
+        "name": "user_id",
+        "bucket_size": 100000
+      },
+      {
+        "name": "gender",
+        "bucket_size": 100
+      },
+      {
+        "name": "age",
+        "bucket_size": 1000
+      },
+      {
+        "name": "occupation",
+        "bucket_size": 100000
+      },
+      {
+        "name": "zip_code",
+        "bucket_size": 100000
+      }
+    ],
     "fields": [
       {
         "field_name": "fu1",
@@ -101,6 +123,12 @@
   },
   "item": {
     "policy_network": "ffm_network",
+    "order_1": [
+      {
+        "name": "item_id",
+        "bucket_size": 10000
+      }
+    ],
     "fields": [
       {
         "field_name": "fi1",
