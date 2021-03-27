@@ -33,6 +33,10 @@ def build_loss_fn(config):
         regloss = tf.contrib.layers.apply_regularization(regularizer)
         tf.summary.histogram("reg_loss", regloss)
 
-        return loss + regloss
+        learning_rate = tf.constant(value=config["learning_rate"], shape=[], dtype=tf.float32)
+        opt = tf.train.AdagradOptimizer(learning_rate)
+        train_op = opt.minimize(loss, global_step=tf.train.get_global_step())
+
+        return loss + regloss, train_op
 
     return loss_fn

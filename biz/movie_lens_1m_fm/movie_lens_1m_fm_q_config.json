@@ -1,0 +1,131 @@
+{
+  "embedding_size": 64,
+  "train_batch_size": 256,
+  "train_neg_size": 128,
+  "eval_point_size": 100000,
+  "eval_pos_size": 1000,
+  "eval_neg_size": 1000,
+  "save_checkpoints_steps": 1000000,
+  "learning_rate": 1,
+  "optimizer": "adagrad_sgd_optimizer",
+  "columns": [
+    {
+      "name": "user:user_id",
+      "type": "single"
+    },
+    {
+      "name": "item:item_id",
+      "type": "single"
+    },
+    {
+      "name": "user:gender",
+      "type": "single"
+    },
+    {
+      "name": "user:age",
+      "type": "single"
+    },
+    {
+      "name": "user:occupation",
+      "type": "single"
+    },
+    {
+      "name": "user:zip_code",
+      "type": "single"
+    },
+    {
+      "name": "item:title",
+      "type": "single"
+    },
+    {
+      "name": "item:genres",
+      "type": "seq",
+      "seq_len": 10,
+      "need_mask": true
+    }
+  ],
+  "loss": {
+    "name": "batch_sampled_softmax_logq",
+    "l2": 0.0
+  },
+  "evals": [
+    {
+      "name": "hr",
+      "topk": [
+        100
+      ]
+    }
+  ],
+  "user": {
+    "policy_network": "fm_network",
+    "features": {
+      "order_1": [
+        {
+          "name": "user_id",
+          "bucket_size": 100000
+        },
+        {
+          "name": "gender",
+          "bucket_size": 100
+        },
+        {
+          "name": "age",
+          "bucket_size": 1000
+        },
+        {
+          "name": "occupation",
+          "bucket_size": 100000
+        },
+        {
+          "name": "zip_code",
+          "bucket_size": 100000
+        }
+      ],
+      "order_2": [
+        {
+          "name": "user_id",
+          "embedding_size": 64,
+          "bucket_size": 100000
+        },
+        {
+          "name": "gender",
+          "embedding_size": 64,
+          "bucket_size": 100
+        },
+        {
+          "name": "age",
+          "embedding_size": 64,
+          "bucket_size": 1000
+        },
+        {
+          "name": "occupation",
+          "embedding_size": 64,
+          "bucket_size": 100000
+        },
+        {
+          "name": "zip_code",
+          "embedding_size": 64,
+          "bucket_size": 100000
+        }
+      ]
+    }
+  },
+  "item": {
+    "policy_network": "fm_network",
+    "features": {
+      "order_1": [
+        {
+          "name": "item_id",
+          "bucket_size": 10000
+        }
+      ],
+      "order_2": [
+        {
+          "name": "item_id",
+          "embedding_size": 64,
+          "bucket_size": 100000
+        }
+      ]
+    }
+  }
+}

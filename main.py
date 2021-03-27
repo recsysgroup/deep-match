@@ -336,7 +336,7 @@ def model_fn_builder(config):
         if mode == tf.estimator.ModeKeys.TRAIN:
             matchNet = MatchNet(config, True)
             loss_fn = build_loss_fn(config)
-            _loss = loss_fn(matchNet, features)
+            _loss, _train_op = loss_fn(matchNet, features)
 
             if FLAGS.init_checkpoint:
                 tvars = tf.trainable_variables()
@@ -353,19 +353,12 @@ def model_fn_builder(config):
 
             global_step = tf.train.get_or_create_global_step()
 
-            from optimizer import build_optimizer_fn
-            optimizer_fn = build_optimizer_fn(config)
-            opt = optimizer_fn(config, FLAGS.train_max_step)
-
-            train_op = opt.minimize(_loss, global_step=tf.train.get_global_step())
-            # hook = tf.train.ProfilerHook(save_steps=10000, output_dir=FLAGS.tmp_dir)
-
             eval_metric_ops = {}
 
             output_spec = tf.estimator.EstimatorSpec(
                 mode=mode,
                 loss=_loss,
-                train_op=train_op,
+                train_op=_train_op,
                 training_chief_hooks=[LogviewTrainHook(eval_metric_ops, global_step, logviewMetricWriter)]
             )
 

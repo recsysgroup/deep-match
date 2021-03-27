@@ -7,7 +7,6 @@
   "eval_neg_size": 1000,
   "save_checkpoints_steps": 1000,
   "learning_rate": 1,
-  "optimizer": "adagrad_optimizer",
   "columns": [
     {
       "name": "user:user_id",
